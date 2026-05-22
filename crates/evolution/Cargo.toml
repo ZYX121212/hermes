@@ -1,0 +1,18 @@
+[package]
+name = "evolution"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+memory = { path = "../memory" }
+dashmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }

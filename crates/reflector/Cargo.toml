@@ -1,0 +1,15 @@
+[package]
+name = "reflector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+evolution = { path = "../evolution" }
+llm = { path = "../llm" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

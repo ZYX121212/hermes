@@ -1,0 +1,20 @@
+# Rust build artifacts
+/target/
+
+# Runtime data
+.hermes_evolution.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
