@@ -288,11 +288,16 @@ fn apply_delta(current: u16, delta: i16) -> u16 {
 fn scroll_focused(state: &mut TuiAppState, delta: i16) {
     match state.focused_panel {
         FocusedPanel::MainLeft => match state.phase {
-            AgentPhase::Planning => {
-                state.plan_scroll = apply_delta(state.plan_scroll, delta);
-            }
-            AgentPhase::Executing => {
-                state.exec_scroll = apply_delta(state.exec_scroll, delta);
+            AgentPhase::Planning | AgentPhase::Executing => {
+                // Use left_tab to determine which content is visible
+                match state.left_tab {
+                    crate::state::LeftTab::Plan => {
+                        state.plan_scroll = apply_delta(state.plan_scroll, delta);
+                    }
+                    crate::state::LeftTab::Execution => {
+                        state.exec_scroll = apply_delta(state.exec_scroll, delta);
+                    }
+                }
             }
             _ => {
                 state.log_scroll = apply_delta(state.log_scroll, delta);
@@ -314,8 +319,10 @@ fn page_scroll_focused(state: &mut TuiAppState, delta: i16) {
 fn scroll_to_top(state: &mut TuiAppState) {
     match state.focused_panel {
         FocusedPanel::MainLeft => match state.phase {
-            AgentPhase::Planning => state.plan_scroll = 0,
-            AgentPhase::Executing => state.exec_scroll = 0,
+            AgentPhase::Planning | AgentPhase::Executing => match state.left_tab {
+                crate::state::LeftTab::Plan => state.plan_scroll = 0,
+                crate::state::LeftTab::Execution => state.exec_scroll = 0,
+            },
             _ => state.log_scroll = 0,
         },
         FocusedPanel::Evolution => state.evo_scroll = 0,
@@ -380,14 +387,23 @@ fn scroll_mouse(
     let in_main = row < header_h + main_h;
     let in_left = col < left_w;
 
+    // Tab bar row during Planning/Executing is not scrollable
+    if in_main && in_left && needs_mini_log && row == header_h {
+        return;
+    }
+
     if in_main && in_left {
         // Main left panel
         match state.phase {
-            AgentPhase::Planning => {
-                state.plan_scroll = apply_delta(state.plan_scroll, delta);
-            }
-            AgentPhase::Executing => {
-                state.exec_scroll = apply_delta(state.exec_scroll, delta);
+            AgentPhase::Planning | AgentPhase::Executing => {
+                match state.left_tab {
+                    crate::state::LeftTab::Plan => {
+                        state.plan_scroll = apply_delta(state.plan_scroll, delta);
+                    }
+                    crate::state::LeftTab::Execution => {
+                        state.exec_scroll = apply_delta(state.exec_scroll, delta);
+                    }
+                }
             }
             _ => {
                 state.log_scroll = apply_delta(state.log_scroll, delta);
