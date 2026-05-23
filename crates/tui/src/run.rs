@@ -251,12 +251,15 @@ where
     // ── Run agent ──
     let result = agent.run_loop(ctx).await;
 
-    // Signal completion
+    // Signal completion — preserve real summary from agent output
     {
         let mut state = app_state.write();
         state.agent_done = true;
         state.phase = AgentPhase::Idle;
-        state.summary = Some("完成 — 按 q 或 Esc 退出".into());
+        // Don't overwrite real summary with boilerplate
+        if state.summary.is_none() {
+            state.summary = Some("完成 — 按 q 或 Esc 退出".into());
+        }
     }
 
     match tui_task.await {
@@ -479,6 +482,22 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                 .iter()
                 .filter(|s| s.status != StepStatus::Pending && s.status != StepStatus::Running)
                 .count();
+            // Add step result to log for persistent visibility
+            let status_icon = if output.success { "✓" } else { "✗" };
+            let preview = crate::state::truncate(
+                &crate::state::strip_ansi(&output.content),
+                80,
+            );
+            state.log_entries.push_back(LogEntry {
+                message: format!(
+                    "{} {} ({:.1}s): {}",
+                    status_icon,
+                    output.step_id.to_string().chars().take(8).collect::<String>(),
+                    output.duration_ms as f64 / 1000.0,
+                    preview,
+                ),
+                is_error: !output.success,
+            });
         }
         AgentEvent::ExecutePhaseComplete { duration_ms, .. } => {
             state.phase = AgentPhase::Reflecting;
@@ -504,6 +523,10 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.phase = AgentPhase::Idle;
         }
         AgentEvent::SummaryReady { summary } => {
+            state.log_entries.push_back(LogEntry {
+                message: format!("结果: {}", summary),
+                is_error: false,
+            });
             state.summary = Some(summary);
         }
         AgentEvent::AgentError { message } => {

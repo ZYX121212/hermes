@@ -32,25 +32,38 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
         return;
     }
 
-    let lines: Vec<Line> = state
-        .log_entries
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            let color = if entry.is_error {
-                Color::Red
+    let mut lines: Vec<Line> = Vec::new();
+
+    // ── Summary banner (prominently displayed at top) ──
+    if let Some(ref summary) = state.summary {
+        lines.push(Line::from(Span::styled(
+            format!(" 结果: {}", summary),
+            Style::default().fg(Color::Yellow),
+        )));
+        lines.push(Line::from(Span::styled(
+            "─".repeat(area.width.saturating_sub(2).max(20) as usize),
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    // ── Log entries ──
+    for (i, entry) in state.log_entries.iter().enumerate() {
+        let color = if entry.is_error {
+            Color::Red
+        } else {
+            let threshold = state.log_entries.len().saturating_sub(3);
+            if i < threshold {
+                Color::DarkGray
             } else {
-                // Dim older entries (beyond last 3)
-                let threshold = state.log_entries.len().saturating_sub(3);
-                if i < threshold {
-                    Color::DarkGray
-                } else {
-                    Color::Gray
-                }
-            };
-            Line::from(Span::styled(&entry.message, Style::default().fg(color)))
-        })
-        .collect();
+                Color::Gray
+            }
+        };
+        lines.push(Line::from(Span::styled(
+            &entry.message,
+            Style::default().fg(color),
+        )));
+    }
 
     let content_height = lines.len();
 
@@ -92,6 +105,20 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
 
     let count = state.log_entries.len();
 
+    // inner width for truncation
+    let text_width = area.width.saturating_sub(2) as usize;
+
+    // Show summary in mini-log if present
+    if let Some(ref summary) = state.summary {
+        let line = Line::from(Span::styled(
+            format!(" 结果: {}", crate::state::truncate(summary, text_width.saturating_sub(4))),
+            Style::default().fg(Color::Yellow),
+        ));
+        let para = Paragraph::new(line).block(block);
+        frame.render_widget(para, area);
+        return;
+    }
+
     if count == 0 {
         let text = Paragraph::new("暂无日志")
             .block(block)
@@ -101,9 +128,6 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
     }
 
     let start = if count > 3 { count - 3 } else { 0 };
-
-    // inner width accounts for border columns (left + right = 2)
-    let text_width = area.width.saturating_sub(2) as usize;
 
     let lines: Vec<Line> = state
         .log_entries
