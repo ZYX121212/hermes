@@ -21,3 +21,9 @@ config/*.toml
 # Environment
 .env
 .env.local
+
+# Claude Code
+.claude/
+
+# Superpowers
+.superpowers/
