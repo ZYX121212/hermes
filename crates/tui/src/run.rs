@@ -362,17 +362,9 @@ fn scroll_mouse(
     let mini_log_h = if needs_mini_log { 3 } else { 0 };
     let main_h = term_size.1.saturating_sub(header_h + footer_h + mini_log_h);
 
-    let (left_pct, _right_pct) = {
-        let has_weights = !state.evolution.all_weights().is_empty();
-        match (state.phase, has_weights) {
-            (AgentPhase::Planning, false) => (85, 15),
-            (AgentPhase::Planning, true) => (75, 25),
-            (AgentPhase::Executing, false) => (80, 20),
-            (AgentPhase::Executing, true) => (70, 30),
-            (_, false) => (75, 25),
-            (_, true) => (60, 40),
-        }
-    };
+    let (left_pct, _right_pct) = state.phase.main_split_ratio(
+        !state.evolution.all_weights().is_empty(),
+    );
 
     let left_w = (term_size.0 as f64 * left_pct as f64 / 100.0) as u16;
 

@@ -36,14 +36,7 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
 
     // ── Main area horizontal split based on phase ──
     let has_weights = !state.evolution.all_weights().is_empty();
-    let (left_pct, right_pct) = match (state.phase, has_weights) {
-        (AgentPhase::Planning, false) => (85, 15),
-        (AgentPhase::Planning, true) => (75, 25),
-        (AgentPhase::Executing, false) => (80, 20),
-        (AgentPhase::Executing, true) => (70, 30),
-        (_, false) => (75, 25),
-        (_, true) => (60, 40),
-    };
+    let (left_pct, right_pct) = state.phase.main_split_ratio(has_weights);
 
     let h_chunks = Layout::horizontal([
         Constraint::Percentage(left_pct),

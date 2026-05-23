@@ -37,6 +37,20 @@ pub enum AgentPhase {
     Evolving,
 }
 
+impl AgentPhase {
+    /// Returns (left_pct, right_pct) for the main horizontal split.
+    pub fn main_split_ratio(&self, has_weights: bool) -> (u16, u16) {
+        match (self, has_weights) {
+            (AgentPhase::Planning, false) => (85, 15),
+            (AgentPhase::Planning, true) => (75, 25),
+            (AgentPhase::Executing, false) => (80, 20),
+            (AgentPhase::Executing, true) => (70, 30),
+            (_, false) => (75, 25),
+            (_, true) => (60, 40),
+        }
+    }
+}
+
 /// Panel focus target for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
