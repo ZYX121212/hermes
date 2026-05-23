@@ -63,6 +63,33 @@ impl FocusedPanel {
     }
 }
 
+/// Tab selection within the left panel during Planning/Executing phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeftTab {
+    Plan,
+    Execution,
+}
+
+impl LeftTab {
+    pub fn next(self) -> Self {
+        match self {
+            LeftTab::Plan => LeftTab::Execution,
+            LeftTab::Execution => LeftTab::Plan,
+        }
+    }
+}
+
+/// Full-screen overlay for viewing complete step output.
+#[derive(Debug, Clone)]
+pub struct StepOutputOverlay {
+    pub step_id: uuid::Uuid,
+    pub tool: String,
+    pub status: StepStatus,
+    pub duration_ms: Option<u64>,
+    pub full_content: String,
+    pub scroll: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepStatus {
     Pending,
@@ -77,6 +104,7 @@ pub struct StepExecState {
     pub tool: String,
     pub status: StepStatus,
     pub content_preview: Option<String>,
+    pub content_full: Option<String>,   // 完整输出（上限 10KB）
     pub duration_ms: Option<u64>,
     pub layer: usize,
 }
@@ -132,6 +160,17 @@ pub struct TuiAppState {
     pub log_scroll: u16,
     pub evo_scroll: u16,
 
+    // Tab selection for left panel during Planning/Executing
+    pub left_tab: LeftTab,
+
+    // Execution step selection for overlay
+    pub exec_selected_index: Option<usize>,
+
+    // Full-screen output overlay state
+    pub output_overlay: Option<StepOutputOverlay>,
+
+    // Total agent duration for results report
+    pub total_duration_ms: Option<u64>,
 
 }
 
@@ -166,7 +205,10 @@ impl TuiAppState {
             exec_scroll: 0,
             log_scroll: 0,
             evo_scroll: 0,
-
+            left_tab: LeftTab::Execution,
+            exec_selected_index: None,
+            output_overlay: None,
+            total_duration_ms: None,
         }
     }
 }

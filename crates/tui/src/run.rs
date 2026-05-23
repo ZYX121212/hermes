@@ -455,6 +455,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                 tool,
                 status: StepStatus::Running,
                 content_preview: None,
+                content_full: None,
                 duration_ms: None,
                 layer,
             });
