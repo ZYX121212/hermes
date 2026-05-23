@@ -54,6 +54,13 @@ impl OpenAIAdapter {
 #[async_trait]
 impl LlmAdapter for OpenAIAdapter {
     async fn complete(&self, prompt: String) -> anyhow::Result<String> {
+        tracing::info!(
+            provider = "openai",
+            model = %self.model,
+            prompt_len = prompt.len(),
+            "LLM completion request"
+        );
+
         let resp = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
@@ -82,7 +89,13 @@ impl LlmAdapter for OpenAIAdapter {
 
         let text = body["choices"][0]["message"]["content"]
             .as_str()
-            .unwrap_or("")
+            .unwrap_or_else(|| {
+                tracing::error!(
+                    body = %serde_json::to_string_pretty(&body).unwrap_or_else(|_| "(unprintable)".into()),
+                    "Unexpected OpenAI API response structure"
+                );
+                ""
+            })
             .to_string();
 
         Ok(text)
@@ -134,7 +147,8 @@ impl LlmAdapter for OpenAIAdapter {
         // DeepSeek and some other providers don't support embeddings.
         // Return a zero vector gracefully instead of failing.
         if !status.is_success() {
-            tracing::debug!(
+            tracing::warn!(
+                status = %status,
                 "Embedding endpoint returned {status} — provider may not support embeddings, using zero vector"
             );
             return Ok(vec![0.0_f32; 1024]);
@@ -145,10 +159,16 @@ impl LlmAdapter for OpenAIAdapter {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                    .map(|v| v.as_f64().map(|x| x as f32).unwrap_or_else(|| {
+                        tracing::warn!("Non-numeric embedding value: {v}");
+                        0.0
+                    }))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                tracing::warn!("Embedding response data array is empty or missing");
+                Vec::new()
+            });
 
         Ok(embedding)
     }

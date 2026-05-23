@@ -47,6 +47,13 @@ impl AnthropicAdapter {
 #[async_trait]
 impl LlmAdapter for AnthropicAdapter {
     async fn complete(&self, prompt: String) -> anyhow::Result<String> {
+        tracing::info!(
+            provider = "anthropic",
+            model = %self.model,
+            prompt_len = prompt.len(),
+            "LLM completion request"
+        );
+
         let resp = self
             .client
             .post("https://api.anthropic.com/v1/messages")
@@ -72,7 +79,13 @@ impl LlmAdapter for AnthropicAdapter {
 
         let text = body["content"][0]["text"]
             .as_str()
-            .unwrap_or("")
+            .unwrap_or_else(|| {
+                tracing::error!(
+                    body = %serde_json::to_string_pretty(&body).unwrap_or_else(|_| "(unprintable)".into()),
+                    "Unexpected Anthropic API response structure"
+                );
+                ""
+            })
             .to_string();
 
         Ok(text)
@@ -111,7 +124,7 @@ impl LlmAdapter for AnthropicAdapter {
     async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
         // Anthropic does not currently provide a dedicated embedding API.
         // In production, use Voyage AI (voyage-3) for embeddings.
-        tracing::debug!(
+        tracing::warn!(
             "AnthropicAdapter: embed() returning zero vector (use VoyageEmbedder instead)"
         );
         Ok(vec![0.0_f32; 1024])

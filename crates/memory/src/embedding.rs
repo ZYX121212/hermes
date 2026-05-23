@@ -38,7 +38,7 @@ impl VoyageEmbedder {
 impl Embedder for VoyageEmbedder {
     async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let Some(ref api_key) = self.api_key else {
-            tracing::debug!("VoyageEmbedder: no API key, returning zero vector (set VOYAGE_API_KEY env var)");
+            tracing::warn!("VoyageEmbedder: no VOYAGE_API_KEY set, using zero vector embeddings (semantic search disabled)");
             return Ok(vec![0.0_f32; self.dimension]);
         };
 
@@ -57,7 +57,7 @@ impl Embedder for VoyageEmbedder {
         if !resp.status().is_success() {
             let status = resp.status();
             let err = resp.text().await.unwrap_or_default();
-            tracing::warn!("Voyage API error ({status}): {err}, falling back to zero vector");
+            tracing::warn!(status = %status, error = %err, "Voyage API error, falling back to zero vector");
             return Ok(vec![0.0_f32; self.dimension]);
         }
 

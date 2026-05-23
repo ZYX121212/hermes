@@ -43,12 +43,15 @@ impl VectorMemory {
             .send()
             .await
             .map(|r| r.status().is_success())
-            .unwrap_or(false);
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Qdrant health check failed — using in-memory fallback");
+                false
+            });
 
         if qdrant_available {
             tracing::info!("Connected to Qdrant at {}", cfg.url);
         } else {
-            tracing::warn!(
+            tracing::info!(
                 "Qdrant not available at {} — using in-memory fallback",
                 cfg.url
             );
@@ -149,7 +152,10 @@ impl VectorMemory {
                             .map(|v| v.as_f64().unwrap_or(0.0) as f32)
                             .collect();
                         Some(MemoryChunk {
-                            id: uuid::Uuid::parse_str(id_str).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                            id: uuid::Uuid::parse_str(id_str).unwrap_or_else(|e| {
+                                tracing::warn!(id_str = id_str, error = %e, "Qdrant returned invalid point UUID, generating new ID");
+                                uuid::Uuid::new_v4()
+                            }),
                             content: content.to_string(),
                             embedding,
                             timestamp: chrono::Utc::now(),

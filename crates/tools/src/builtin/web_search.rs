@@ -93,7 +93,13 @@ impl Tool for WebSearchTool {
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let body = r.text().await.unwrap_or_default();
+                let body = match r.text().await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "WebSearch response body read failed");
+                        return Ok(ToolOutput::error(format!("Search response read failed: {e}")));
+                    }
+                };
                 Ok(ToolOutput {
                     success: true,
                     content: body,

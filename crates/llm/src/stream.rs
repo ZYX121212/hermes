@@ -62,7 +62,10 @@ impl Stream for SseChunkStream {
                                 }
                             }
                         }
-                        Err(_) => continue,
+                        Err(e) => {
+                            tracing::debug!(error = %e, "SSE data line parse failed, skipping chunk");
+                            continue;
+                        }
                     }
                 }
                 continue;
@@ -71,8 +74,13 @@ impl Stream for SseChunkStream {
             // Need more bytes
             match self.byte_stream.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
-                    self.buffer
-                        .push_str(&String::from_utf8_lossy(&chunk));
+                    match String::from_utf8(chunk.to_vec()) {
+                        Ok(s) => self.buffer.push_str(&s),
+                        Err(_) => {
+                            tracing::debug!("Non-UTF8 bytes in stream, using lossy conversion");
+                            self.buffer.push_str(&String::from_utf8_lossy(&chunk));
+                        }
+                    }
                 }
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(anyhow::anyhow!("Stream error: {e}"))));
