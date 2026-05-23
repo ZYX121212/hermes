@@ -232,6 +232,11 @@ where
                                         && state.focused_panel == FocusedPanel::MainLeft
                                     {
                                         state.left_tab = state.left_tab.next();
+                                    } else if state.phase == AgentPhase::Idle
+                                        && state.agent_done
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                    {
+                                        state.results_visible = !state.results_visible;
                                     } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         state.focused_panel = state.focused_panel.prev();
                                     } else {
@@ -348,6 +353,7 @@ where
     {
         let mut state = app_state.write();
         state.agent_done = true;
+        state.results_visible = true;
         state.phase = AgentPhase::Idle;
         // Don't overwrite real summary with boilerplate
         if state.summary.is_none() {
@@ -531,6 +537,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.exec_scroll = 0;
             state.left_tab = LeftTab::Execution;
             state.exec_selected_index = None;
+            state.results_visible = true;
         }
         AgentEvent::PlanPhaseStarted => {
             state.phase = AgentPhase::Planning;

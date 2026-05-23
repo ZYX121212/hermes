@@ -161,6 +161,7 @@ pub struct TuiAppState {
     pub should_quit: bool,
     pub agent_done: bool,
     pub awaiting_input: bool,
+    pub results_visible: bool,
     pub input_text: String,
     pub help_visible: bool,
 
@@ -211,6 +212,7 @@ impl TuiAppState {
             should_quit: false,
             agent_done: false,
             awaiting_input: false,
+            results_visible: true,
             input_text: String::new(),
             help_visible: false,
             input_history: VecDeque::with_capacity(50),

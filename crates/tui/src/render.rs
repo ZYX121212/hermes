@@ -95,7 +95,7 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
             }
         }
         _ => {
-            if state.agent_done {
+            if state.agent_done && state.results_visible {
                 panels::results::render_results(
                     frame,
                     left_area,
