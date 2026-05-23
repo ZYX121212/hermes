@@ -147,10 +147,14 @@ impl LlmAdapter for OpenAIAdapter {
         // DeepSeek and some other providers don't support embeddings.
         // Return a zero vector gracefully instead of failing.
         if !status.is_success() {
-            tracing::warn!(
-                status = %status,
-                "Embedding endpoint returned {status} — provider may not support embeddings, using zero vector"
-            );
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static EMBED_WARNED: AtomicBool = AtomicBool::new(false);
+            if !EMBED_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    status = %status,
+                    "Embedding endpoint returned {status} — provider may not support embeddings, using zero vector"
+                );
+            }
             return Ok(vec![0.0_f32; 1024]);
         }
 
@@ -160,7 +164,7 @@ impl LlmAdapter for OpenAIAdapter {
             .map(|arr| {
                 arr.iter()
                     .map(|v| v.as_f64().map(|x| x as f32).unwrap_or_else(|| {
-                        tracing::warn!("Non-numeric embedding value: {v}");
+                        tracing::warn!(value = %v, "Non-numeric embedding value");
                         0.0
                     }))
                     .collect()

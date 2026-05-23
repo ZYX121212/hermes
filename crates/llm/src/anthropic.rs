@@ -124,9 +124,13 @@ impl LlmAdapter for AnthropicAdapter {
     async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
         // Anthropic does not currently provide a dedicated embedding API.
         // In production, use Voyage AI (voyage-3) for embeddings.
-        tracing::warn!(
-            "AnthropicAdapter: embed() returning zero vector (use VoyageEmbedder instead)"
-        );
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static EMBED_WARNED: AtomicBool = AtomicBool::new(false);
+        if !EMBED_WARNED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "AnthropicAdapter: embed() returning zero vector (use VoyageEmbedder instead)"
+            );
+        }
         Ok(vec![0.0_f32; 1024])
     }
 }

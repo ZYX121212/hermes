@@ -38,7 +38,11 @@ impl VoyageEmbedder {
 impl Embedder for VoyageEmbedder {
     async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let Some(ref api_key) = self.api_key else {
-            tracing::warn!("VoyageEmbedder: no VOYAGE_API_KEY set, using zero vector embeddings (semantic search disabled)");
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static EMBED_WARNED: AtomicBool = AtomicBool::new(false);
+            if !EMBED_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!("VoyageEmbedder: no VOYAGE_API_KEY set, using zero vector embeddings (semantic search disabled)");
+            }
             return Ok(vec![0.0_f32; self.dimension]);
         };
 
