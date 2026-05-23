@@ -470,10 +470,18 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                     StepStatus::Failed
                 };
                 step.duration_ms = Some(output.duration_ms);
-                step.content_preview = Some(crate::state::truncate(
-                    &crate::state::strip_ansi(&output.content),
-                    100,
-                ));
+                let clean = crate::state::strip_ansi(&output.content);
+                step.content_full = Some({
+                    let limit = 10_000; // 10KB upper bound
+                    if clean.len() > limit {
+                        let mut s = clean[..limit].to_string();
+                        s.push_str("…[truncated]");
+                        s
+                    } else {
+                        clean.clone()
+                    }
+                });
+                step.content_preview = Some(crate::state::truncate(&clean, 100));
             }
             // Recompute completed count
             state.exec_completed_steps = state
