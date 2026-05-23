@@ -225,6 +225,12 @@ pub struct MockMemoryStore {
     entries: parking_lot::RwLock<Vec<MemoryChunk>>,
 }
 
+impl Default for MockMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockMemoryStore {
     pub fn new() -> Self {
         Self {

@@ -555,6 +555,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.exec_completed_steps = 0;
             state.exec_scroll = 0;
             state.exec_selected_index = None;
+            state.left_tab = LeftTab::Execution;
         }
         AgentEvent::StepStarted {
             step_id,

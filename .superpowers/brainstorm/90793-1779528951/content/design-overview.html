@@ -1,0 +1,163 @@
+<h2>设计方案总览</h2>
+<p class="subtitle">四个问题 — 四个对应方案</p>
+
+<div class="section">
+  <h3>1. Plan 持久化 — 多 Tab 切换</h3>
+  <div class="mockup">
+    <div class="mockup-header">Planning/Executing 阶段 — 左侧面板顶部 Tab 栏</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;color:#aaa;">
+┌─ Header ──────────────────────────────────────────────────────┐
+│                                                                │
+│  ┌─ [Plan] ─── [Exec] ────────────────────────────────────┐  │
+│  │ ┌─ Plan (3 steps) ────────────────────────────────────┐ │  │
+│  │ │                                                     │ │  │
+│  │ │ Step 1: 读取和分析配置文件                           │ │  │
+│  │ │ Step 2: 连接目标数据库                               │ │  │
+│  │ │ Step 3: 验证数据完整性                               │ │  │
+│  │ │                                                     │ │  │
+│  │ │ 详细描述: 首先需要定位并解析 config.yaml ...         │ │  │
+│  │ │                                                     │ │  │
+│  │ └─────────────────────────────────────────────────────┘ │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌─ Evolution ────────────────────────────────────────────┐  │
+│  │ ▼ 统计数据     Win Rate: 0.0%    Avg: 0.000            │  │
+│  │ ▼ 策略权重     暂无数据                                │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌─ Log ──────────────────────────────────────────────────────┐│
+└────────────────────────────────────────────────────────────────┘</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>2. 结果页 — 结构化执行报告</h3>
+  <div class="mockup">
+    <div class="mockup-header">Agent 完成后 (Idle 阶段) — 左侧完整报告</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;color:#aaa;">
+┌─ Header ──────────────────────────────────────────────────────┐
+│                                                                │
+│  ┌─ Results ──────────────────────────────────────────────┐  │
+│  │                                                         │  │
+│  │  结果: 成功完成配置文件迁移                              │  │
+│  │  ─────────────────────────────────────────               │  │
+│  │                                                         │  │
+│  │  总耗时: 45.2s    步骤: 3/3 成功    反思评分: 0.85      │  │
+│  │                                                         │  │
+│  │  ✓ read_config    (1.2s)  layer 0                       │  │
+│  │  ✓ migrate_data   (32.1s)  layer 1                      │  │
+│  │  ✓ validate       (11.9s)  layer 2                      │  │
+│  │                                                         │  │
+│  │  ── 反思 ─────────────────────────────                   │  │
+│  │  migrate_data 耗时较长，但数据完整性验证通过...          │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌─ Evolution ────────────────────────────────────────────┐  │
+│  │  (自适应宽度 — 有策略数据时展开)                        │  │
+└────────────────────────────────────────────────────────────────┘</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>3. 完整输出 — Overlay 弹窗</h3>
+  <div class="mockup">
+    <div class="mockup-header">Execution 面板中按 Enter 弹出全屏 overlay</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;color:#ff0;">
+╔══════════════════════════════════════════════════════════════╗
+║  Step Output: read_config                         [Esc 关闭] ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Tool: read_file                                             ║
+║  Duration: 1.2s    Status: ✓ Success                         ║
+║                                                              ║
+║  ── Full Output ────────────────────────────────             ║
+║                                                              ║
+║  {                                                           ║
+║    "database": {                                             ║
+║      "host": "localhost",                                    ║
+║      "port": 5432,                                           ║
+║      "name": "hermes_prod",                                  ║
+║      "pool_size": 20,                                        ║
+║      "timeout_ms": 30000                                     ║
+║    },                                                        ║
+║    "features": {                                             ║
+║      "enable_cache": true,                                   ║
+║      "cache_ttl_sec": 3600                                   ║
+║    }                                                         ║
+║  }                                                           ║
+║                                            ← 完整内容可滚动  ║
+╚══════════════════════════════════════════════════════════════╝</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>4. Evolution 自适应 — 动态比例</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">无策略数据: 80/20</div>
+      <div class="mockup-body">
+        <pre style="font-size:10px;line-height:1.3;margin:0;color:#aaa;">
+┌─ Main ────────────┐┌─ Evo ─┐
+│                    ││ Stats  │
+│  ← 80% →           ││ 暂无   │
+│                    ││ 数据   │
+│                    ││        │
+│                    ││ ← 20%  │
+└────────────────────┘└────────┘</pre>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">有策略数据: 65/35</div>
+      <div class="mockup-body">
+        <pre style="font-size:10px;line-height:1.3;margin:0;color:#aaa;">
+┌─ Main ──────────┐┌─ Evo ─────────┐
+│                  ││ Stats         │
+│  ← 65% →         ││ Win: 67.3%    │
+│                  ││               │
+│                  ││ Weights       │
+│                  ││ read: +0.32   │
+│                  ││ search:-0.15  │
+│                  ││ ← 35% →       │
+└──────────────────┘└───────────────┘</pre>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="section">
+  <h3>实现要点总结</h3>
+  <table style="width:100%;border-collapse:collapse;">
+    <tr style="border-bottom:1px solid #333;">
+      <th style="text-align:left;padding:8px;">功能</th>
+      <th style="text-align:left;padding:8px;">改动文件</th>
+      <th style="text-align:left;padding:8px;">复杂度</th>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;">Plan Tab 切换</td>
+      <td style="padding:8px;">render.rs, run.rs, state.rs</td>
+      <td style="padding:8px;">中</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;">结构化结果报告</td>
+      <td style="padding:8px;">新增 panels/results.rs, render.rs</td>
+      <td style="padding:8px;">中</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;">Overlay 弹窗</td>
+      <td style="padding:8px;">新增 panels/overlay.rs, run.rs</td>
+      <td style="padding:8px;">低</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;">Evolution 自适应</td>
+      <td style="padding:8px;">render.rs, state.rs</td>
+      <td style="padding:8px;">低</td>
+    </tr>
+  </table>
+</div>

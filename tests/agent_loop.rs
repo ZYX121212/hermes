@@ -224,7 +224,7 @@ async fn test_full_loop_single_iteration() {
     assert!(!weights.is_empty(), "Should have at least one strategy weight");
 
     // Working memory should have an entry from the execution
-    assert!(agent.working_memory.len() > 0);
+    assert!(!agent.working_memory.is_empty());
 }
 
 #[tokio::test]

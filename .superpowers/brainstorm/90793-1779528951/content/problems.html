@@ -1,0 +1,100 @@
+<h2>Hermes TUI 当前问题诊断</h2>
+<p class="subtitle">4 个影响信息密度和可用性的问题</p>
+
+<div class="section">
+  <h3>问题 1: Plan 内容在规划结束后消失</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">规划阶段 (Planning)</div>
+      <div class="mockup-body">
+        <pre style="font-size:11px;line-height:1.4;margin:0;color:#0f0;">
+┌─ Plan (3) ────────────────────────┐
+│                                    │
+│ Step 1: 读取配置文件               │
+│ Step 2: 连接数据库          ▐      │
+│ Step 3: 验证数据格式                │
+│                                    │
+│ 详细的LLM输出内容...               │
+│                                    │
+└────────────────────────────────────┘</pre>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">执行阶段 (Executing) — Plan 消失!</div>
+      <div class="mockup-body">
+        <pre style="font-size:11px;line-height:1.4;margin:0;color:#f00;">
+┌─ Execution (2/3) ─────────────────┐
+│                                    │
+│ ✓ read_file (1.2s)  ...           │
+│ ◎ connect_db         ...          │
+│ ○ validate_data      ...          │
+│                                    │
+│                                    │
+└────────────────────────────────────┘</pre>
+        <p style="color:#f66;margin:8px 0 0 0;font-size:12px;">Plan 步骤定义已不可见 — 无法对照执行进度</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>问题 2: Evolution 面板在无数据时浪费 40% 屏幕</h3>
+  <div class="mockup">
+    <div class="mockup-header">Idle 阶段 — 60/40 分割, 右侧几乎空白</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;">
+┌─ Log ─────────────────┐ ┌─ Evolution ────────────┐
+│                        │ │                        │
+│ 结果: 任务完成         │ │ ▼ 统计数据             │
+│ ─────────────────────  │ │   Win Rate: 0.0%       │
+│                        │ │   Avg: 0.000           │
+│ ✓ read (1.2s): 文件... │ │                        │
+│ ✓ search (2.3s): ...   │ │ ▼ 策略权重             │
+│ ✗ delete (0.5s): ...   │ │   暂无数据     ← 浪费  │
+│                        │ │                        │
+│          ← 60% →        │ │    ← 40% →             │
+└────────────────────────┘ └────────────────────────┘</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>问题 3: 步骤输出被截断 (50-80 字符)</h3>
+  <div class="mockup">
+    <div class="mockup-header">Executing 面板中的截断输出</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;">
+┌─ Execution (2/3) ──────────────────────────────┐
+│                                                  │
+│ ✓ read_file (1.2s)  File content: {"user...      │
+│   ↑ 截断到 50 字符 — 实际可能是 500 行的 JSON     │
+│                                                  │
+│ ✓ web_search (2.3s)  Search results: Found...     │
+│   ↑ 截断到 80 字符 — 无法判断搜索质量             │
+│                                                  │
+└──────────────────────────────────────────────────┘</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>问题 4: Agent 完成后界面大部分空白</h3>
+  <div class="mockup">
+    <div class="mockup-header">Idle 阶段 — Agent 已完成</div>
+    <div class="mockup-body">
+      <pre style="font-size:11px;line-height:1.4;margin:0;">
+┌─ Log ─────────────────┐ ┌─ Evolution ────────────┐
+│                        │ │                        │
+│ 结果: 任务完成 ← 1行   │ │                        │
+│ ─────────────────────  │ │   (几乎空白)           │
+│                        │ │                        │
+│ (剩余 20+ 行空白)      │ │                        │
+│                        │ │                        │
+│                        │ │                        │
+│                        │ │                        │
+│                        │ │                        │
+└────────────────────────┘ └────────────────────────┘</pre>
+    </div>
+  </div>
+</div>
+</div>

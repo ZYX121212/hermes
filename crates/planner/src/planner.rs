@@ -65,7 +65,7 @@ impl Planner {
             self.llm.complete(prompt).await?
         };
         let raw = Self::extract_json(&raw);
-        let (specs, _retried) = match serde_json::from_str::<Vec<StepSpec>>(&raw) {
+        let (specs, _retried) = match serde_json::from_str::<Vec<StepSpec>>(raw) {
             Ok(specs) if !specs.is_empty() => (specs, false),
             _ => {
                 self.emit(AgentEvent::PlanRetry);
@@ -85,7 +85,7 @@ impl Planner {
                     self.llm.complete(retry_prompt).await?
                 };
                 let retry_raw = Self::extract_json(&retry_raw);
-                let specs: Vec<StepSpec> = serde_json::from_str(&retry_raw).map_err(|e| {
+                let specs: Vec<StepSpec> = serde_json::from_str(retry_raw).map_err(|e| {
                     anyhow::anyhow!("计划解析失败，请重新描述你的任务。\n错误: {e}")
                 })?;
                 if specs.is_empty() {
@@ -201,7 +201,7 @@ impl Planner {
         prompt.push_str("- Steps must be concrete and executable, not vague descriptions\n");
         prompt.push_str("- Dependencies must only reference earlier steps (lower indices)\n");
         prompt.push_str("- Prefer fewer, more powerful steps over many trivial ones\n");
-        prompt.push_str("\n");
+        prompt.push('\n');
         prompt.push_str(&memory_hint);
         prompt.push_str("User goal: ");
         prompt.push_str(&obs.user_input);
@@ -244,7 +244,7 @@ impl Planner {
                         full.push_str(&token);
                     }
                     Err(e) => {
-                        eprint!("\x1b[0m\n");
+                        eprintln!("\x1b[0m");
                         return Err(e);
                     }
                 }

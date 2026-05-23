@@ -44,7 +44,7 @@ pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay
         .title(Span::styled(title, Style::default().fg(Color::White)));
 
     let inner = block.inner(overlay_rect);
-    let viewport_h = inner.height.saturating_sub(3); // info + separator lines
+    let viewport_h = inner.height.saturating_sub(2); // info + separator lines above scrollable content
 
     let mut lines: Vec<Line> = Vec::new();
 
