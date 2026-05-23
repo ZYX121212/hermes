@@ -619,6 +619,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
         }
         AgentEvent::ExecutePhaseComplete { duration_ms, .. } => {
             state.phase = AgentPhase::Reflecting;
+            state.total_duration_ms = Some(duration_ms);
             state.log_entries.push_back(LogEntry {
                 message: format!("执行完成 ({:.1}s)", duration_ms as f64 / 1000.0),
                 is_error: false,

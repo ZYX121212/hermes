@@ -95,12 +95,21 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
             }
         }
         _ => {
-            panels::log::render_log(
-                frame,
-                left_area,
-                state,
-                state.focused_panel == FocusedPanel::MainLeft,
-            );
+            if state.agent_done {
+                panels::results::render_results(
+                    frame,
+                    left_area,
+                    state,
+                    state.focused_panel == FocusedPanel::MainLeft,
+                );
+            } else {
+                panels::log::render_log(
+                    frame,
+                    left_area,
+                    state,
+                    state.focused_panel == FocusedPanel::MainLeft,
+                );
+            }
         }
     }
 
