@@ -83,7 +83,17 @@ impl Scheduler {
                             });
                         }
 
-                        let _permit = concurrency.acquire().await;
+                        let _permit = match concurrency.acquire().await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return agent_core::StepOutput {
+                                    step_id: step.id,
+                                    success: false,
+                                    content: format!("{e}"),
+                                    duration_ms: 0,
+                                };
+                            }
+                        };
                         let step_start = Instant::now();
                         let out = registry.call(&step.tool, step.args.clone()).await;
                         let duration = step_start.elapsed().as_millis() as u64;
@@ -94,11 +104,28 @@ impl Scheduler {
                                 content: tool_out.content,
                                 duration_ms: duration,
                             },
-                            Err(e) => agent_core::StepOutput {
-                                step_id: step.id,
-                                success: false,
-                                content: format!("{e}"),
-                                duration_ms: duration,
+                            Err(e) => {
+                                let err_msg = format!("{e}");
+                                let error_category = if err_msg.contains("not found")
+                                    || err_msg.contains("Tool not found")
+                                {
+                                    "tool_not_found"
+                                } else {
+                                    "tool_error"
+                                };
+                                tracing::warn!(
+                                    tool = %step.tool,
+                                    step_id = %step.id,
+                                    category = error_category,
+                                    error = %err_msg,
+                                    "Step execution failed"
+                                );
+                                agent_core::StepOutput {
+                                    step_id: step.id,
+                                    success: false,
+                                    content: err_msg,
+                                    duration_ms: duration,
+                                }
                             },
                         };
 
@@ -115,7 +142,17 @@ impl Scheduler {
                                     serde_json::json!(step_out.content),
                                 );
                             }
-                            let _permit = concurrency.acquire().await;
+                            let _permit = match concurrency.acquire().await {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    return agent_core::StepOutput {
+                                        step_id: step.id,
+                                        success: false,
+                                        content: format!("retry aborted: {e}"),
+                                        duration_ms: duration,
+                                    };
+                                }
+                            };
                             let retry_start = Instant::now();
                             let retry_out = registry.call(&step.tool, retry_args).await;
                             let retry_dur = retry_start.elapsed().as_millis() as u64;
@@ -178,7 +215,9 @@ impl Scheduler {
     /// Send an event if a sender is configured.
     fn emit(&self, event: AgentEvent) {
         if let Some(ref tx) = self.event_tx {
-            let _ = tx.send(event);
+            if tx.send(event).is_err() {
+                tracing::warn!("Scheduler event channel closed");
+            }
         }
     }
 }

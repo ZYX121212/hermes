@@ -17,12 +17,12 @@ impl ConcurrencyLimit {
 
     /// Acquire a permit before executing a tool call.
     /// Returns a guard that releases the permit on drop.
-    pub async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
+    pub async fn acquire(&self) -> Result<tokio::sync::OwnedSemaphorePermit, anyhow::Error> {
         self.semaphore
             .clone()
             .acquire_owned()
             .await
-            .expect("semaphore closed")
+            .map_err(|_| anyhow::anyhow!("Concurrency semaphore closed — agent is shutting down"))
     }
 
     pub fn available_permits(&self) -> usize {
@@ -39,10 +39,10 @@ mod tests {
         let limit = ConcurrencyLimit::new(2);
         assert_eq!(limit.available_permits(), 2);
 
-        let p1 = limit.acquire().await;
+        let p1 = limit.acquire().await.unwrap();
         assert_eq!(limit.available_permits(), 1);
 
-        let p2 = limit.acquire().await;
+        let p2 = limit.acquire().await.unwrap();
         assert_eq!(limit.available_permits(), 0);
 
         drop(p1);

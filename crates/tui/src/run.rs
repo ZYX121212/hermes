@@ -80,7 +80,14 @@ where
             {
                 let state = app_state.read();
                 if let Err(e) = terminal.draw(|f| crate::render::render_app(f, &state)) {
-                    let _ = e;
+                    tracing::error!(error = %e, "Terminal draw failed");
+                    drop(state);
+                    let mut state = app_state.write();
+                    state.should_quit = true;
+                    state.log_entries.push_back(LogEntry {
+                        message: format!("Terminal render error: {e}"),
+                        is_error: true,
+                    });
                     break;
                 }
                 if state.should_quit {
@@ -252,7 +259,11 @@ where
         state.summary = Some("完成 — 按 q 或 Esc 退出".into());
     }
 
-    let _ = tui_task.await;
+    match tui_task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::error!(error = %e, "TUI render task returned error"),
+        Err(join_err) => tracing::error!(error = %join_err, "TUI render task panicked"),
+    }
 
     result
 }

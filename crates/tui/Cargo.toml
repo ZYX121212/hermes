@@ -11,4 +11,5 @@ parking_lot.workspace = true
 agent-core = { path = "../agent-core" }
 evolution = { path = "../evolution" }
 anyhow.workspace = true
+tracing.workspace = true
 uuid.workspace = true
