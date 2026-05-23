@@ -18,10 +18,19 @@ pub trait HermesAgent: Send + Sync + 'static {
     /// until the context signals a stop.
     async fn run_loop(&mut self, ctx: Context) -> Result<()> {
         loop {
+            tracing::info!("Turn starting: observe phase");
             let obs = self.observe(&ctx).await?;
+            if ctx.should_stop() {
+                tracing::info!("Stop signaled after observe, exiting loop");
+                break;
+            }
+            tracing::info!("Plan phase");
             let plan = self.plan(obs).await?;
+            tracing::info!(steps = plan.steps.len(), "Execute phase");
             let result = self.execute(plan).await?;
+            tracing::info!(success = result.success, duration_ms = result.duration_ms, "Reflect phase");
             let insight = self.reflect(&result).await?;
+            tracing::info!(score = insight.score, strategy = %insight.strategy_id, "Evolve phase");
             self.evolve(insight).await?;
             if ctx.should_stop() {
                 break;

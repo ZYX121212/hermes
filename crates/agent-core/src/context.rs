@@ -30,9 +30,15 @@ impl Context {
         };
         let flag = Arc::clone(&ctx.stop_flag);
         tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("received Ctrl-C, signalling stop");
-            flag.store(true, Ordering::Relaxed);
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => {
+                    tracing::info!("received Ctrl-C, signalling stop");
+                    flag.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to register Ctrl-C handler: {e}");
+                }
+            }
         });
         ctx
     }
@@ -50,9 +56,15 @@ impl Context {
         };
         let flag = Arc::clone(&ctx.stop_flag);
         tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("received Ctrl-C, signalling stop");
-            flag.store(true, Ordering::Relaxed);
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => {
+                    tracing::info!("received Ctrl-C, signalling stop");
+                    flag.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to register Ctrl-C handler: {e}");
+                }
+            }
         });
         ctx
     }

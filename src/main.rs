@@ -350,7 +350,9 @@ impl SmallHermesAgent {
     /// Send an event if a sender is configured.
     fn emit(&self, event: AgentEvent) {
         if let Some(ref tx) = self.event_tx {
-            let _ = tx.send(event);
+            if tx.send(event).is_err() {
+                tracing::warn!("Event channel closed — TUI observer may have disconnected");
+            }
         }
     }
 
@@ -399,9 +401,13 @@ async fn main() -> anyhow::Result<()> {
     let llm: Arc<dyn llm::LlmAdapter> = match cfg.llm.provider.as_str() {
         "openai" | "deepseek" => {
             let key = if cfg.llm.api_key.is_empty() {
-                std::env::var("OPENAI_API_KEY")
+                let k = std::env::var("OPENAI_API_KEY")
                     .or_else(|_| std::env::var("DEEPSEEK_API_KEY"))
-                    .unwrap_or_default()
+                    .unwrap_or_default();
+                if k.is_empty() {
+                    tracing::warn!("No OpenAI/DeepSeek API key configured — API calls will fail");
+                }
+                k
             } else {
                 cfg.llm.api_key.clone()
             };
@@ -427,7 +433,11 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => {
             let key = if cfg.llm.api_key.is_empty() {
-                std::env::var("ANTHROPIC_API_KEY").unwrap_or_default()
+                let k = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+                if k.is_empty() {
+                    tracing::warn!("No Anthropic API key configured — API calls will fail");
+                }
+                k
             } else {
                 cfg.llm.api_key.clone()
             };
@@ -454,8 +464,13 @@ async fn main() -> anyhow::Result<()> {
             cfg.learning_rate,
             Arc::clone(&memory),
         )
-        .unwrap_or_else(|_| {
-            tracing::info!("No previous evolution state found, starting fresh");
+        .unwrap_or_else(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("No such file") || err_str.contains("entity not found") {
+                tracing::info!("No previous evolution state found, starting fresh");
+            } else {
+                tracing::warn!("Failed to load evolution state ({e}), starting fresh");
+            }
             evolution::EvolutionEngine::new(cfg.learning_rate, Arc::clone(&memory))
         }),
     );
@@ -518,6 +533,15 @@ async fn main() -> anyhow::Result<()> {
         tui_input: tui_input.clone(),
     };
 
+    tracing::info!(
+        "Hermes agent starting: provider={}, model={}, config={}, interactive={}, tui={}",
+        cfg.llm.provider,
+        cfg.llm.model,
+        cli.config,
+        cli.interactive,
+        cli.tui,
+    );
+
     // ── Run ──────────────────────────────────────────────────
     if cli.tui {
         let ctx = if cli.interactive {
@@ -552,10 +576,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Save evolution state on exit
+    let mut exit_code = 0;
     if let Err(e) = evolution_handle.save_to_file(".hermes_evolution.json") {
         tracing::warn!("Failed to save evolution state: {e}");
+        exit_code = 1;
     }
 
     tracing::info!("Hermes Agent stopped.");
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
     Ok(())
 }
