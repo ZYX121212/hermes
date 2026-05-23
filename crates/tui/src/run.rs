@@ -14,7 +14,7 @@ use ratatui::Terminal;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::state::{
-    AgentPhase, FocusedPanel, LogEntry, StepExecState, StepStatus, TuiAppState, TuiInput,
+    AgentPhase, FocusedPanel, LeftTab, LogEntry, StepExecState, StepStatus, TuiAppState, TuiInput,
 };
 
 /// Main entry point for TUI mode.
@@ -187,7 +187,11 @@ where
                                     state.help_visible = !state.help_visible;
                                 }
                                 KeyCode::Tab => {
-                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    if matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                    {
+                                        state.left_tab = state.left_tab.next();
+                                    } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         state.focused_panel = state.focused_panel.prev();
                                     } else {
                                         state.focused_panel = state.focused_panel.next();
@@ -420,11 +424,13 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.summary = None;
             state.plan_scroll = 0;
             state.exec_scroll = 0;
+            state.left_tab = LeftTab::Execution;
         }
         AgentEvent::PlanPhaseStarted => {
             state.phase = AgentPhase::Planning;
             state.streaming_buffer.clear();
             state.plan_ready = false;
+            state.left_tab = LeftTab::Plan;
         }
         AgentEvent::PlanStreamingToken { token } => {
             state.streaming_buffer.push_str(&token);

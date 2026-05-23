@@ -49,21 +49,50 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
 
     // ── Render left panel based on phase ──
     match state.phase {
-        AgentPhase::Planning => {
-            panels::plan::render_plan(
-                frame,
-                left_area,
-                state,
-                state.focused_panel == FocusedPanel::MainLeft,
-            );
-        }
-        AgentPhase::Executing => {
-            panels::execution::render_execution(
-                frame,
-                left_area,
-                state,
-                state.focused_panel == FocusedPanel::MainLeft,
-            );
+        AgentPhase::Planning | AgentPhase::Executing => {
+            use ratatui::style::{Color, Modifier, Style};
+            use ratatui::text::{Line, Span};
+            use ratatui::widgets::Paragraph;
+
+            use crate::state::LeftTab;
+
+            // Split left area: tab bar (1) + content (fill)
+            let left_chunks = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ]).split(left_area);
+
+            let tab_area = left_chunks[0];
+            let content_area = left_chunks[1];
+
+            // Render tab bar
+            let plan_style = if state.left_tab == LeftTab::Plan {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            let exec_style = if state.left_tab == LeftTab::Execution {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            let tabs_text = Line::from(vec![
+                Span::styled("[Plan]", plan_style),
+                Span::raw(" "),
+                Span::styled("[Exec]", exec_style),
+            ]);
+            frame.render_widget(Paragraph::new(tabs_text), tab_area);
+
+            // Render content based on selected tab
+            let main_focused = state.focused_panel == FocusedPanel::MainLeft;
+            match state.left_tab {
+                LeftTab::Plan => {
+                    panels::plan::render_plan(frame, content_area, state, main_focused);
+                }
+                LeftTab::Execution => {
+                    panels::execution::render_execution(frame, content_area, state, main_focused);
+                }
+            }
         }
         _ => {
             panels::log::render_log(

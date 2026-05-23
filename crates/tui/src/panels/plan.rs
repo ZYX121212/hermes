@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, TuiAppState};
+use crate::state::{render_scrollbar, AgentPhase, TuiAppState};
 
 pub fn render_plan(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
     let border_color = if focused {
@@ -34,7 +34,7 @@ pub fn render_plan(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: 
         return;
     }
 
-    let cursor = if state.frame_count % 16 < 8 { "▌" } else { " " };
+    let cursor = if state.phase == AgentPhase::Planning && state.frame_count % 16 < 8 { "▌" } else { " " };
     let content = format!("{}{}", state.streaming_buffer, cursor);
 
     let line_count = content.lines().count();
