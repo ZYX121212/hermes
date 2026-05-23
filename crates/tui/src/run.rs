@@ -101,6 +101,47 @@ where
                     Ok(Event::Key(key)) => {
                         let mut state = app_state.write();
 
+                        // ── Overlay mode (absorbs all keys) ──
+                        if state.output_overlay.is_some() {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                                    state.output_overlay = None;
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = o.scroll.saturating_sub(1);
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = o.scroll.saturating_add(1);
+                                    }
+                                }
+                                KeyCode::PageUp => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = o.scroll.saturating_sub(10);
+                                    }
+                                }
+                                KeyCode::PageDown => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = o.scroll.saturating_add(10);
+                                    }
+                                }
+                                KeyCode::Home => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = 0;
+                                    }
+                                }
+                                KeyCode::End => {
+                                    if let Some(ref mut o) = state.output_overlay {
+                                        o.scroll = 10_000;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+
                         // ── Help overlay absorbs keys ──
                         if state.help_visible {
                             match key.code {
@@ -199,10 +240,40 @@ where
                                 }
                                 // Scroll focused panel
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    scroll_focused(&mut state, -1);
+                                    if state.phase == AgentPhase::Executing
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                        && state.left_tab == crate::state::LeftTab::Execution
+                                    {
+                                        let len = state.executions.len();
+                                        if len > 0 {
+                                            let idx = state.exec_selected_index.unwrap_or(0);
+                                            let new_idx = if idx > 0 { idx - 1 } else { 0 };
+                                            state.exec_selected_index = Some(new_idx);
+                                            if (new_idx as u16) < state.exec_scroll {
+                                                state.exec_scroll = new_idx as u16;
+                                            }
+                                        }
+                                    } else {
+                                        scroll_focused(&mut state, -1);
+                                    }
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    scroll_focused(&mut state, 1);
+                                    if state.phase == AgentPhase::Executing
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                        && state.left_tab == crate::state::LeftTab::Execution
+                                    {
+                                        let len = state.executions.len();
+                                        if len > 0 {
+                                            let idx = state.exec_selected_index.unwrap_or(0);
+                                            let new_idx = if idx + 1 < len { idx + 1 } else { len - 1 };
+                                            state.exec_selected_index = Some(new_idx);
+                                            if (new_idx as u16) >= state.exec_scroll + 8 {
+                                                state.exec_scroll = (new_idx as u16).saturating_sub(7);
+                                            }
+                                        }
+                                    } else {
+                                        scroll_focused(&mut state, 1);
+                                    }
                                 }
                                 KeyCode::PageUp => {
                                     page_scroll_focused(&mut state, -10);
@@ -218,7 +289,25 @@ where
                                 }
                                 // Evolution panel: Enter toggles section collapse
                                 KeyCode::Enter => {
-                                    if state.focused_panel == FocusedPanel::Evolution {
+                                    if state.phase == AgentPhase::Executing
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                        && state.left_tab == crate::state::LeftTab::Execution
+                                    {
+                                        if let Some(idx) = state.exec_selected_index {
+                                            if let Some(step) = state.executions.get(idx) {
+                                                state.output_overlay = Some(crate::state::StepOutputOverlay {
+                                                    step_id: step.step_id,
+                                                    tool: step.tool.clone(),
+                                                    status: step.status.clone(),
+                                                    duration_ms: step.duration_ms,
+                                                    full_content: step.content_full.clone().unwrap_or_else(|| {
+                                                        step.content_preview.clone().unwrap_or_default()
+                                                    }),
+                                                    scroll: 0,
+                                                });
+                                            }
+                                        }
+                                    } else if state.focused_panel == FocusedPanel::Evolution {
                                         toggle_evolution_section(&mut state);
                                     }
                                 }

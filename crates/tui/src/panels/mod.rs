@@ -5,4 +5,5 @@ pub mod header;
 pub mod help;
 pub mod input;
 pub mod log;
+pub mod overlay;
 pub mod plan;

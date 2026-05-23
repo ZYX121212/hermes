@@ -136,4 +136,9 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     if state.help_visible {
         panels::help::render_help(frame, area, state);
     }
+
+    // ── Render output overlay (on top of everything, including help) ──
+    if let Some(ref overlay) = state.output_overlay {
+        panels::overlay::render_overlay(frame, area, overlay);
+    }
 }

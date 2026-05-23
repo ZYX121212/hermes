@@ -50,7 +50,8 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
     let lines: Vec<Line> = state
         .executions
         .iter()
-        .map(|step| {
+        .enumerate()
+        .map(|(idx, step)| {
             let indent = "  ".repeat(step.layer.min(6));
 
             let (icon, color) = match step.status {
@@ -89,7 +90,13 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
                 spans.push(d);
             }
             spans.push(content);
-            Line::from(spans)
+
+            let line_style = if state.exec_selected_index == Some(idx) {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            Line::from(spans).style(line_style)
         })
         .collect();
 
