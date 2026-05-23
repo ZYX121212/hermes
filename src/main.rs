@@ -469,7 +469,7 @@ async fn main() -> anyhow::Result<()> {
             if err_str.contains("No such file") || err_str.contains("entity not found") {
                 tracing::info!("No previous evolution state found, starting fresh");
             } else {
-                tracing::warn!("Failed to load evolution state ({e}), starting fresh");
+                tracing::warn!(error = %e, "Failed to load evolution state, starting fresh");
             }
             evolution::EvolutionEngine::new(cfg.learning_rate, Arc::clone(&memory))
         }),
@@ -576,15 +576,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Save evolution state on exit
-    let mut exit_code = 0;
     if let Err(e) = evolution_handle.save_to_file(".hermes_evolution.json") {
-        tracing::warn!("Failed to save evolution state: {e}");
-        exit_code = 1;
+        tracing::warn!(error = %e, "Failed to save evolution state");
+        anyhow::bail!("Failed to save evolution state: {e}");
     }
 
     tracing::info!("Hermes Agent stopped.");
-    if exit_code != 0 {
-        std::process::exit(exit_code);
-    }
     Ok(())
 }

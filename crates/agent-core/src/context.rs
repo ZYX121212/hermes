@@ -36,7 +36,7 @@ impl Context {
                     flag.store(true, Ordering::Relaxed);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to register Ctrl-C handler: {e}");
+                    tracing::error!(error = %e, "Failed to register Ctrl-C handler — agent will not respond to Ctrl-C");
                 }
             }
         });
@@ -62,7 +62,7 @@ impl Context {
                     flag.store(true, Ordering::Relaxed);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to register Ctrl-C handler: {e}");
+                    tracing::error!(error = %e, "Failed to register Ctrl-C handler — agent will not respond to Ctrl-C");
                 }
             }
         });
