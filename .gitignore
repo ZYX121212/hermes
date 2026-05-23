@@ -15,6 +15,9 @@
 .DS_Store
 Thumbs.db
 
+# Config files with secrets (use .example templates)
+config/*.toml
+
 # Environment
 .env
 .env.local
