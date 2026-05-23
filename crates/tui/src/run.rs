@@ -530,6 +530,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.plan_scroll = 0;
             state.exec_scroll = 0;
             state.left_tab = LeftTab::Execution;
+            state.exec_selected_index = None;
         }
         AgentEvent::PlanPhaseStarted => {
             state.phase = AgentPhase::Planning;
@@ -553,6 +554,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.exec_total_steps = total_steps;
             state.exec_completed_steps = 0;
             state.exec_scroll = 0;
+            state.exec_selected_index = None;
         }
         AgentEvent::StepStarted {
             step_id,

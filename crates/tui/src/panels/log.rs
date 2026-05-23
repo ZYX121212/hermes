@@ -127,7 +127,7 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
         return;
     }
 
-    let start = if count > 3 { count - 3 } else { 0 };
+    let start = count.saturating_sub(3);
 
     let lines: Vec<Line> = state
         .log_entries
