@@ -60,19 +60,29 @@ impl EvolutionEngine {
         let lr_t = adaptive_lr(base_lr, n);
         let delta = insight.score * lr_t;
 
-        tracing::debug!(
-            strategy = %insight.strategy_id,
-            score = insight.score,
-            lr = lr_t,
-            delta = delta,
-            "evolution update"
-        );
-
         // 3. Lock-free strategy weight update with clamping
+        let strategy_id = insight.strategy_id.clone();
+        let old_weight = self.strategy_weights
+            .get(&strategy_id)
+            .map(|w| *w);
         self.strategy_weights
-            .entry(insight.strategy_id.clone())
+            .entry(strategy_id.clone())
             .and_modify(|w| *w = clamp(*w + delta, -10.0, 10.0))
             .or_insert(clamp(delta, -10.0, 10.0));
+        let new_weight = self.strategy_weights
+            .get(&strategy_id)
+            .map(|w| *w)
+            .unwrap_or(0.0);
+
+        tracing::info!(
+            strategy = %strategy_id,
+            old = old_weight.unwrap_or(0.0),
+            new = new_weight,
+            delta,
+            lr = lr_t,
+            score = insight.score,
+            "evolution update"
+        );
 
         // 4. Async write to long-term memory (failure does not block the main loop)
         let store = Arc::clone(&self.memory_store);
@@ -82,9 +92,17 @@ impl EvolutionEngine {
             embedding: insight.embedding.clone(),
             timestamp: chrono::Utc::now(),
         };
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Err(e) = store.upsert(chunk).await {
-                tracing::warn!("memory upsert failed: {e}");
+                tracing::warn!(error = %e, "memory upsert failed");
+            }
+        });
+        tokio::spawn(async move {
+            match handle.await {
+                Ok(()) => {}
+                Err(join_err) => {
+                    tracing::warn!(error = %join_err, "Memory upsert task panicked");
+                }
             }
         });
 

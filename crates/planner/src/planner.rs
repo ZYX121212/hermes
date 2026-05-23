@@ -69,6 +69,7 @@ impl Planner {
             Ok(specs) if !specs.is_empty() => (specs, false),
             _ => {
                 self.emit(AgentEvent::PlanRetry);
+                tracing::warn!("Plan parse failed, retrying with clarification prompt...");
                 // Retry once with a clarification prompt
                 let retry_prompt = format!(
                     "Your previous response was invalid or empty. You MUST return a valid JSON array \
@@ -105,10 +106,20 @@ impl Planner {
             .into_iter()
             .enumerate()
             .map(|(i, s)| {
+                let candidates: Vec<&str> = s.candidates.iter().map(|c| c.as_str()).collect();
                 let strategy = self
                     .evolution
-                    .best_strategy(&s.candidates.iter().map(|c| c.as_str()).collect::<Vec<_>>())
-                    .unwrap_or_else(|| "default".into());
+                    .best_strategy(&candidates)
+                    .unwrap_or_else(|| {
+                        if !candidates.is_empty() {
+                            tracing::info!(
+                                tool = %s.tool,
+                                candidates = ?candidates,
+                                "no strategy data available, using default"
+                            );
+                        }
+                        "default".into()
+                    });
 
                 let depends: Vec<Uuid> = s.depends.iter().map(|&d| step_ids[d]).collect();
 
@@ -142,7 +153,9 @@ impl Planner {
     /// Send an event if a sender is configured.
     fn emit(&self, event: AgentEvent) {
         if let Some(ref tx) = self.event_tx {
-            let _ = tx.send(event);
+            if tx.send(event).is_err() {
+                tracing::warn!("Planner event channel closed");
+            }
         }
     }
 
@@ -153,7 +166,10 @@ impl Planner {
             "bash: Run shell commands\nweb_search: Search the web".to_string()
         } else {
             serde_json::to_string_pretty(&self.tool_descriptions)
-                .unwrap_or_else(|_| "Tools unavailable".into())
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "Failed to serialize tool descriptions");
+                    "Tools unavailable".into()
+                })
         };
 
         let memory_hint = if obs.memory_ctx.is_empty() {
