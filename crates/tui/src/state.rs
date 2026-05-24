@@ -118,7 +118,7 @@ pub struct StepExecState {
     pub tool: String,
     pub status: StepStatus,
     pub content_preview: Option<String>,
-    pub content_full: Option<String>,   // 完整输出（上限 10KB）
+    pub content_full: Option<String>, // 完整输出（上限 10KB）
     pub duration_ms: Option<u64>,
     pub layer: usize,
 }
@@ -186,7 +186,6 @@ pub struct TuiAppState {
 
     // Total agent duration for results report
     pub total_duration_ms: Option<u64>,
-
 }
 
 impl TuiAppState {
@@ -205,9 +204,9 @@ impl TuiAppState {
             summary: None,
             log_entries: VecDeque::new(),
             evolution,
-            evo_stats_hidden: false,
-            evo_weights_hidden: false,
-            evo_meta_hidden: false,
+            evo_stats_hidden: true,
+            evo_weights_hidden: true,
+            evo_meta_hidden: true,
             focused_panel: FocusedPanel::MainLeft,
             should_quit: false,
             agent_done: false,
@@ -247,7 +246,7 @@ pub fn strip_ansi(text: &str) -> String {
         if ch == '\x1b' && chars.peek() == Some(&'[') {
             chars.next(); // consume '['
             for c in chars.by_ref() {
-                if c == 'm' {
+                if c.is_ascii_alphabetic() {
                     break;
                 }
             }
@@ -256,6 +255,18 @@ pub fn strip_ansi(text: &str) -> String {
         }
     }
     result
+}
+
+/// Estimate the number of rendered terminal rows after ratatui wrapping.
+pub fn wrapped_line_count(text: &str, width: u16) -> usize {
+    let width = width.max(1) as usize;
+    text.lines()
+        .map(|line| {
+            let chars = line.chars().count();
+            chars.saturating_sub(1) / width + 1
+        })
+        .sum::<usize>()
+        .max(1)
 }
 
 /// Render a character-based scrollbar for a panel.
@@ -268,10 +279,10 @@ pub fn render_scrollbar(scroll: u16, content_height: usize, viewport_height: u16
         return String::new(); // no scrollbar needed
     }
     let thumb_h = ((vh as f64 / ch as f64) * vh as f64).ceil() as usize;
-    let thumb_pos = if ch > vh {
-        ((scroll as f64 / (ch - vh) as f64) * (vh - thumb_h) as f64).round() as usize
-    } else {
-        0
+    let max_thumb = vh.saturating_sub(thumb_h);
+    let thumb_pos = {
+        let pos = ((scroll as f64 / (ch - vh) as f64) * max_thumb as f64).round() as usize;
+        pos.min(max_thumb)
     };
 
     let mut bar = String::with_capacity(vh);
@@ -279,8 +290,246 @@ pub fn render_scrollbar(scroll: u16, content_height: usize, viewport_height: u16
         if i >= thumb_pos && i < thumb_pos + thumb_h {
             bar.push('█');
         } else {
-            bar.push('░');
+            bar.push('│');
         }
     }
     bar
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── AgentPhase::main_split_ratio ──
+
+    #[test]
+    fn test_split_ratio_sums_to_100() {
+        for phase in &[
+            AgentPhase::Idle,
+            AgentPhase::Observing,
+            AgentPhase::Planning,
+            AgentPhase::Executing,
+            AgentPhase::Reflecting,
+            AgentPhase::Evolving,
+        ] {
+            for has_weights in [false, true] {
+                let (l, r) = phase.main_split_ratio(has_weights);
+                assert_eq!(
+                    l + r,
+                    100,
+                    "phase={phase:?} has_weights={has_weights}: {l}+{r} != 100"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_ratio_planning_wider() {
+        // Planning should have wider left panel than Idle
+        let (plan_l, _) = AgentPhase::Planning.main_split_ratio(false);
+        let (idle_l, _) = AgentPhase::Idle.main_split_ratio(false);
+        assert!(
+            plan_l >= idle_l,
+            "Planning left {plan_l} should be >= Idle left {idle_l}"
+        );
+    }
+
+    #[test]
+    fn test_split_ratio_with_weights_narrower_left() {
+        // With weights, left panel should be narrower
+        for phase in &[
+            AgentPhase::Planning,
+            AgentPhase::Executing,
+            AgentPhase::Idle,
+        ] {
+            let (l_no, _) = phase.main_split_ratio(false);
+            let (l_yes, _) = phase.main_split_ratio(true);
+            assert!(
+                l_yes < l_no,
+                "phase={phase:?}: with weights {l_yes} should be < without {l_no}"
+            );
+        }
+    }
+
+    // ── FocusedPanel ──
+
+    #[test]
+    fn test_focused_panel_cycle() {
+        let start = FocusedPanel::MainLeft;
+        let next = start.next();
+        let next2 = next.next();
+        let next3 = next2.next();
+        assert_eq!(next3, start, "next-next-next should return to start");
+        assert_eq!(start.prev(), next2, "prev from start should equal next2");
+    }
+
+    // ── LeftTab ──
+
+    #[test]
+    fn test_left_tab_toggle() {
+        assert_eq!(LeftTab::Plan.next(), LeftTab::Execution);
+        assert_eq!(LeftTab::Execution.next(), LeftTab::Plan);
+    }
+
+    // ── truncate ──
+
+    #[test]
+    fn test_truncate_no_op() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_with_ellipsis() {
+        let result = truncate("hello world", 5);
+        assert!(result.starts_with("hello"));
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_utf8_boundary() {
+        // Chinese characters are 3 bytes each in UTF-8
+        let text = "你好世界测试文本";
+        let result = truncate(text, 3);
+        assert_eq!(result.chars().count(), 4); // 3 chars + '…'
+    }
+
+    #[test]
+    fn test_truncate_empty() {
+        assert_eq!(truncate("", 5), "");
+    }
+
+    // ── strip_ansi ──
+
+    #[test]
+    fn test_strip_ansi_color_codes() {
+        assert_eq!(strip_ansi("\x1b[32mgreen\x1b[0m"), "green");
+        assert_eq!(strip_ansi("\x1b[1;31mbold red\x1b[0m"), "bold red");
+    }
+
+    #[test]
+    fn test_strip_ansi_no_escape() {
+        assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_strip_ansi_empty() {
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn test_strip_ansi_only_escape() {
+        assert_eq!(strip_ansi("\x1b[0m"), "");
+    }
+
+    #[test]
+    fn test_strip_ansi_complex() {
+        let input = "\x1b[35m📝 Summary\x1b[0m\n\x1b[2mDetails\x1b[0m";
+        let result = strip_ansi(input);
+        assert!(result.contains("📝 Summary"));
+        assert!(result.contains("Details"));
+        assert!(!result.contains('\x1b'));
+    }
+
+    #[test]
+    fn test_strip_ansi_non_color_csi() {
+        assert_eq!(strip_ansi("\x1b[2Khello\x1b[?25l"), "hello");
+    }
+
+    // ── wrapped_line_count ──
+
+    #[test]
+    fn test_wrapped_line_count_single_line() {
+        assert_eq!(wrapped_line_count("hello", 10), 1);
+    }
+
+    #[test]
+    fn test_wrapped_line_count_wraps_long_line() {
+        assert_eq!(wrapped_line_count("abcdef", 3), 2);
+    }
+
+    #[test]
+    fn test_wrapped_line_count_multiple_lines() {
+        assert_eq!(wrapped_line_count("abcde\nxy", 3), 3);
+    }
+
+    // ── render_scrollbar ──
+
+    #[test]
+    fn test_scrollbar_no_bar_when_content_fits() {
+        // content_height <= viewport_height → no scrollbar
+        let bar = render_scrollbar(0, 5, 10);
+        assert!(bar.is_empty());
+    }
+
+    #[test]
+    fn test_scrollbar_has_thumb() {
+        let bar = render_scrollbar(0, 100, 10);
+        assert_eq!(bar.chars().count(), 10);
+        assert!(bar.contains('█'), "should have thumb chars: {bar:?}");
+        assert!(bar.contains('│'), "should have track chars: {bar:?}");
+    }
+
+    #[test]
+    fn test_scrollbar_at_end() {
+        let bar = render_scrollbar(u16::MAX, 100, 10);
+        assert_eq!(bar.chars().count(), 10);
+        // Thumb should be at the bottom
+        assert!(bar.ends_with('█'));
+    }
+
+    #[test]
+    fn test_scrollbar_min_viewport() {
+        // viewport_height = 0 should be clamped to 1
+        let bar = render_scrollbar(0, 100, 0);
+        assert_eq!(bar.chars().count(), 1);
+    }
+
+    #[test]
+    fn test_scrollbar_min_content() {
+        // content_height = 0 should be clamped to 1
+        let bar = render_scrollbar(0, 0, 10);
+        assert!(bar.is_empty(), "content=0 <= viewport=10, no bar needed");
+    }
+
+    // ── TuiAppState initial values ──
+
+    #[test]
+    fn test_initial_state_defaults() {
+        let evo = Arc::new(evolution::EvolutionEngine::new(
+            0.01,
+            Arc::new(memory::MockMemoryStore::default()),
+        ));
+        let state = TuiAppState::new("test".into(), evo);
+        assert_eq!(state.agent_name, "test");
+        assert_eq!(state.turn, 0);
+        assert_eq!(state.phase, AgentPhase::Idle);
+        assert_eq!(state.focused_panel, FocusedPanel::MainLeft);
+        assert_eq!(state.left_tab, LeftTab::Execution);
+        assert!(!state.should_quit);
+        assert!(!state.agent_done);
+        assert!(state.results_visible);
+        assert!(state.output_overlay.is_none());
+        assert!(state.exec_selected_index.is_none());
+    }
+
+    // ── UTF-8 boundary safety (regression test for content_full truncation) ──
+
+    #[test]
+    fn test_utf8_boundary_safe_truncation() {
+        // Simulate the truncation logic in handle_event
+        let text = "a".repeat(9998) + "你好世界"; // 9998 ASCII + 4 multi-byte chars
+        assert!(text.len() > 10000); // bytes > 10000
+        let limit = 10_000;
+        let mut end = limit;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let _s = text[..end].to_string(); // must not panic
+        assert!(end <= limit);
+        assert!(
+            end < 10000,
+            "end should have stepped back from 10000 boundary"
+        );
+    }
 }
