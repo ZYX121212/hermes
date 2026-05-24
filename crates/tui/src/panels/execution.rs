@@ -2,43 +2,38 @@
 // Execution panel: per-step progress with layer indentation, progress bar, scrollbar.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Gauge, Paragraph};
 use ratatui::Frame;
 
 use crate::state::{render_scrollbar, TuiAppState};
+use crate::theme;
 
 pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
     let completed = state.exec_completed_steps;
     let total = state.exec_total_steps;
 
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            format!(" Execution ({}/{}) ", completed, total),
-            Style::default().fg(Color::Yellow),
-        ));
+    let block = theme::panel_block(
+        format!("Execute  {completed}/{total}"),
+        theme::YELLOW,
+        focused,
+    );
 
     if state.executions.is_empty() {
-        let text = Paragraph::new("等待执行...")
+        let text = Paragraph::new(theme::empty("等待执行步骤..."))
             .block(block)
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme::SUBTLE).bg(theme::PANEL));
         frame.render_widget(text, area);
         return;
     }
 
     let inner = block.inner(area);
+    frame.render_widget(block, area);
 
     // Split: step list + progress bar
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)])
+        .margin(0)
         .split(inner);
 
     let list_area = chunks[0];
@@ -55,24 +50,33 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
             let indent = "  ".repeat(step.layer.min(6));
 
             let (icon, color) = match step.status {
-                crate::state::StepStatus::Pending => ("○", Color::DarkGray),
-                crate::state::StepStatus::Running => {
-                    let blink = if state.frame_count % 16 < 8 { "◉" } else { "◎" };
-                    (blink, Color::Yellow)
-                }
-                crate::state::StepStatus::Success => ("✓", Color::Green),
-                crate::state::StepStatus::Failed => ("✗", Color::Red),
+                crate::state::StepStatus::Pending => ("○", theme::SUBTLE),
+                crate::state::StepStatus::Running => ("◉", theme::YELLOW),
+                crate::state::StepStatus::Success => ("✓", theme::GREEN),
+                crate::state::StepStatus::Failed => ("✗", theme::RED),
+            };
+
+            let selector = if state.exec_selected_index == Some(idx) {
+                "› "
+            } else {
+                "  "
             };
 
             let tool = Span::styled(
-                format!("{}{} {}", indent, icon, step.tool),
-                Style::default().fg(color),
+                format!("{}{}{} {}", selector, indent, icon, step.tool),
+                Style::default().fg(color).bg(theme::PANEL).add_modifier(
+                    if step.status == crate::state::StepStatus::Running {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    },
+                ),
             );
 
             let duration = step.duration_ms.map(|d| {
                 Span::styled(
                     format!("  ({:.1}s)", d as f64 / 1000.0),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
                 )
             });
 
@@ -80,8 +84,11 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
                 || Span::raw(""),
                 |c| {
                     let clean = crate::state::strip_ansi(c);
-                    let short = crate::state::truncate(&clean, 50);
-                    Span::styled(format!("  {}", short), Style::default().fg(Color::Gray))
+                    let short = crate::state::truncate(&clean, 30);
+                    Span::styled(
+                        format!("  {}", short),
+                        Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                    )
                 },
             );
 
@@ -92,9 +99,9 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
             spans.push(content);
 
             let line_style = if state.exec_selected_index == Some(idx) {
-                Style::default().bg(Color::DarkGray)
+                Style::default().bg(theme::PANEL_ALT)
             } else {
-                Style::default()
+                Style::default().bg(theme::PANEL)
             };
             Line::from(spans).style(line_style)
         })
@@ -104,33 +111,24 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
 
     // Render step list
     let para = Paragraph::new(lines)
+        .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .scroll((state.exec_scroll, 0));
     frame.render_widget(para, list_area);
 
-    // Render block border
-    frame.render_widget(
-        Paragraph::new("").block(block),
-        area,
-    );
-
     // Progress bar
     if total > 0 {
-        let bar_width = bar_area.width.saturating_sub(2).max(1) as usize;
-        let filled = (completed as f64 / total as f64 * bar_width as f64).round() as usize;
-        let empty = bar_width.saturating_sub(filled);
-        let pct = if total > 0 { completed * 100 / total } else { 0 };
-        let bar_text = format!(
-            " {}{}  {}/{}  {}%",
-            "█".repeat(filled),
-            "░".repeat(empty),
-            completed,
-            total,
-            pct
-        );
-
-        let bar_span = Span::styled(bar_text, Style::default().fg(Color::Cyan));
-        let bar_para = Paragraph::new(bar_span);
-        frame.render_widget(bar_para, bar_area);
+        let pct = if total > 0 {
+            completed * 100 / total
+        } else {
+            0
+        };
+        let ratio = completed as f64 / total as f64;
+        let gauge = Gauge::default()
+            .gauge_style(Style::default().fg(theme::CYAN).bg(theme::PANEL_ALT))
+            .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
+            .label(format!(" {completed}/{total}  {pct}% "))
+            .ratio(ratio.clamp(0.0, 1.0));
+        frame.render_widget(gauge, bar_area);
     }
 
     // Scrollbar (single widget)
@@ -138,7 +136,12 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
         let bar = render_scrollbar(state.exec_scroll, content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
-            .map(|ch| Line::from(Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))))
+            .map(|ch| {
+                Line::from(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+                ))
+            })
             .collect();
         let bar_rect = Rect {
             x: area.x + area.width.saturating_sub(1),

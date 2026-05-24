@@ -2,45 +2,43 @@
 // Plan panel: shows streaming LLM output during planning with scrollbar.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, AgentPhase, TuiAppState};
+use crate::state::{render_scrollbar, wrapped_line_count, AgentPhase, TuiAppState};
+use crate::theme;
 
 pub fn render_plan(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            format!(" Plan ({}) ", state.plan_steps_count),
-            Style::default().fg(Color::Cyan),
-        ));
+    let block = theme::panel_block(
+        format!("Plan  {} steps", state.plan_steps_count),
+        theme::CYAN,
+        focused,
+    );
 
     let inner = block.inner(area);
 
     if state.streaming_buffer.is_empty() && !state.plan_ready {
-        let text = Paragraph::new("等待规划...")
+        let text = Paragraph::new(theme::empty("等待规划输出..."))
             .block(block)
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme::SUBTLE).bg(theme::PANEL));
         frame.render_widget(text, area);
         return;
     }
 
-    let cursor = if state.phase == AgentPhase::Planning && state.frame_count % 16 < 8 { "▌" } else { " " };
+    let cursor = if state.phase == AgentPhase::Planning {
+        "▌"
+    } else {
+        ""
+    };
     let content = format!("{}{}", state.streaming_buffer, cursor);
 
-    let line_count = content.lines().count();
+    let line_count = wrapped_line_count(&content, inner.width.saturating_sub(1));
 
     let text = Paragraph::new(content)
         .block(block)
+        .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .wrap(Wrap { trim: false })
         .scroll((state.plan_scroll, 0));
 
@@ -52,7 +50,12 @@ pub fn render_plan(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: 
         let bar = render_scrollbar(state.plan_scroll, line_count, vh);
         let bar_lines: Vec<Line> = bar
             .chars()
-            .map(|ch| Line::from(Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))))
+            .map(|ch| {
+                Line::from(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+                ))
+            })
             .collect();
         let bar_rect = Rect {
             x: area.x + area.width.saturating_sub(1),
