@@ -1,11 +1,18 @@
-// src/main.rs  (~80 lines)
+// src/main.rs
 // Hermes Agent CLI — assembles all subsystems per the arch spec.
 use std::sync::Arc;
 
-use agent_core::AgentEvent;
+use agent_core::{AgentEvent, HermesAgent};
+use axum::{
+    extract::State as AxumState,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use clap::Parser;
 use serde::Deserialize;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Mutex;
 
 // ── CLI ──────────────────────────────────────────────────────
 
@@ -14,6 +21,9 @@ use tokio::sync::mpsc::UnboundedSender;
 struct Cli {
     #[arg(short, long, default_value = "config/default.toml")]
     config: String,
+    /// 配置预设: dev, prod 等（自动加载 config/profiles/<name>.toml）
+    #[arg(short, long)]
+    profile: Option<String>,
     #[arg(short, long)]
     task: Option<String>,
     /// Interactive mode: multi-turn conversation, reads tasks from stdin
@@ -22,6 +32,71 @@ struct Cli {
     /// Launch with terminal user interface (ratatui).
     #[arg(long)]
     tui: bool,
+
+    // ── Config overrides ────────────────────────────────
+    /// LLM API key (overrides config file and env vars)
+    #[arg(long)]
+    api_key: Option<String>,
+    /// LLM provider: "anthropic", "openai", or "deepseek"
+    #[arg(long)]
+    provider: Option<String>,
+    /// LLM model name
+    #[arg(long)]
+    model: Option<String>,
+    /// LLM max tokens per request
+    #[arg(long)]
+    max_tokens: Option<u32>,
+    /// LLM API base URL (overrides provider default)
+    #[arg(long)]
+    base_url: Option<String>,
+    /// Search API key (Brave Search)
+    #[arg(long)]
+    search_api_key: Option<String>,
+    /// Learning rate for evolution (0.0–1.0)
+    #[arg(long)]
+    learning_rate: Option<f64>,
+    /// Max parallel step execution
+    #[arg(long)]
+    max_concurrency: Option<usize>,
+    /// Danger command policy: "ask", "skip", or "deny"
+    #[arg(long)]
+    danger_mode: Option<String>,
+    /// Max retries per step before trying fallback tools
+    #[arg(long)]
+    max_step_retries: Option<usize>,
+    /// Max replan attempts when all steps fail
+    #[arg(long)]
+    max_replans: Option<usize>,
+    /// Context compression threshold (conversation entries)
+    #[arg(long)]
+    compress_threshold: Option<usize>,
+    /// Fraction of history to keep after compression (0.0–1.0)
+    #[arg(long)]
+    compress_keep_ratio: Option<f64>,
+    /// 退出时保存会话到文件
+    #[arg(long)]
+    save: Option<String>,
+    /// Cron 表达式定时执行（如 "0 */6 * * *" 每6小时）
+    #[arg(long)]
+    schedule: Option<String>,
+    /// 从文件恢复之前的会话
+    #[arg(long)]
+    resume: Option<String>,
+    /// Start the LLM routing gateway
+    #[arg(long)]
+    gateway: bool,
+    /// Gateway config path (only used with --gateway)
+    #[arg(long, default_value = "config/gateway.toml")]
+    gateway_config: String,
+    /// 以 MCP (Model Context Protocol) stdio server 模式运行
+    #[arg(long)]
+    mcp_server: bool,
+    /// 启动 HTTP 服务器模式
+    #[arg(long)]
+    serve: Option<u16>,
+    /// 预加载知识库目录（可重复指定）
+    #[arg(long = "knowledge-base")]
+    knowledge_base: Vec<String>,
 }
 
 // ── Config ───────────────────────────────────────────────────
@@ -39,6 +114,18 @@ struct Config {
     search: SearchConfig,
     #[serde(default)]
     scorer: ScorerConfig,
+    #[serde(default)]
+    guard: GuardConfig,
+    #[serde(default = "default_max_step_retries")]
+    max_step_retries: usize,
+    #[serde(default = "default_max_replans")]
+    max_replans: usize,
+    #[serde(default = "default_compress_threshold")]
+    compress_threshold: usize,
+    #[serde(default = "default_compress_keep_ratio")]
+    compress_keep_ratio: f64,
+    #[serde(default = "default_plugin_dirs")]
+    plugin_dirs: Vec<String>,
 }
 
 impl Config {
@@ -126,6 +213,42 @@ fn default_search_endpoint() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct GuardConfig {
+    #[serde(default = "default_danger_mode")]
+    danger_mode: String,
+    #[serde(default)]
+    dangerous_patterns: Vec<String>,
+}
+
+impl Default for GuardConfig {
+    fn default() -> Self {
+        Self {
+            danger_mode: default_danger_mode(),
+            dangerous_patterns: vec![],
+        }
+    }
+}
+
+fn default_max_step_retries() -> usize {
+    3
+}
+fn default_max_replans() -> usize {
+    1
+}
+fn default_compress_threshold() -> usize {
+    20
+}
+fn default_compress_keep_ratio() -> f64 {
+    0.5
+}
+fn default_plugin_dirs() -> Vec<String> {
+    vec!["plugins".into()]
+}
+fn default_danger_mode() -> String {
+    "ask".into()
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ScorerConfig {
     #[serde(default = "default_success_weight")]
     success_weight: f64,
@@ -161,221 +284,6 @@ fn default_latency_target() -> u64 {
     2000
 }
 
-// ── Agent struct ─────────────────────────────────────────────
-
-struct SmallHermesAgent {
-    planner: planner::Planner,
-    scheduler: scheduler::Scheduler,
-    reflector: reflector::Reflector,
-    evolution: Arc<evolution::EvolutionEngine>,
-    working_memory: memory::WorkingMemory,
-    llm: Arc<dyn llm::LlmAdapter>,
-    turn: u64,
-    /// Optional event sender for TUI progress reporting.
-    event_tx: Option<UnboundedSender<AgentEvent>>,
-    /// Conversation history for multi-turn context (user_input → summary pairs).
-    conversation_history: Vec<(String, String)>,
-    /// TUI input state for in-terminal interactive input.
-    tui_input: Option<Arc<tui::TuiInput>>,
-}
-
-#[async_trait::async_trait]
-impl agent_core::agent::HermesAgent for SmallHermesAgent {
-    async fn observe(
-        &self,
-        ctx: &agent_core::context::Context,
-    ) -> anyhow::Result<agent_core::Observation> {
-        let user_input = if ctx.is_interactive() {
-            let task = if let Some(ref tui_input) = self.tui_input {
-                // TUI mode: signal TUI to show input bar, poll for submission
-                tui_input.awaiting.store(true, std::sync::atomic::Ordering::Relaxed);
-                tui_input.buffer.lock().clear();
-                *tui_input.submitted.lock() = None;
-
-                let mut input = String::new();
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    if let Some(text) = tui_input.submitted.lock().take() {
-                        input = text;
-                        break;
-                    }
-                    if ctx.should_stop() {
-                        break;
-                    }
-                }
-                tui_input.awaiting.store(false, std::sync::atomic::Ordering::Relaxed);
-                input
-            } else {
-                ctx.next_interactive_task()
-            };
-            if task.is_empty() || task == "exit" || task == "quit" {
-                ctx.signal_stop();
-                return Ok(agent_core::Observation {
-                    id: uuid::Uuid::new_v4(),
-                    timestamp: chrono::Utc::now(),
-                    user_input: String::new(),
-                    env_state: serde_json::json!({}),
-                    memory_ctx: vec![],
-                });
-            }
-            task
-        } else {
-            ctx.task()
-                .unwrap_or("No task provided — waiting for input")
-                .to_string()
-        };
-
-        let mut memory_ctx = self.working_memory.recent(5);
-
-        // Inject conversation history as context for multi-turn coherence
-        for (i, (q, a)) in self.conversation_history.iter().rev().take(5).enumerate() {
-            memory_ctx.push(agent_core::MemoryChunk {
-                id: uuid::Uuid::new_v4(),
-                content: format!("[对话记录 #{}] 用户: {} | 结果: {}", i + 1, q, a),
-                embedding: vec![],
-                timestamp: chrono::Utc::now(),
-            });
-        }
-
-        Ok(agent_core::Observation {
-            id: uuid::Uuid::new_v4(),
-            timestamp: chrono::Utc::now(),
-            user_input,
-            env_state: serde_json::json!({
-                "working_memory_size": self.working_memory.len(),
-            }),
-            memory_ctx,
-        })
-    }
-
-    async fn plan(
-        &self,
-        obs: agent_core::Observation,
-    ) -> anyhow::Result<agent_core::Plan> {
-        self.planner.plan(obs).await
-    }
-
-    async fn execute(
-        &self,
-        plan: agent_core::Plan,
-    ) -> anyhow::Result<agent_core::ExecutionResult> {
-        let result = self.scheduler.execute(&plan).await?;
-
-        // Display results (CLI mode only; TUI gets events from scheduler)
-        for output in &result.outputs {
-            self.working_memory.push(agent_core::MemoryChunk {
-                id: uuid::Uuid::new_v4(),
-                content: format!(
-                    "step={} success={} content={}",
-                    output.step_id, output.success, output.content
-                ),
-                embedding: vec![],
-                timestamp: chrono::Utc::now(),
-            });
-        }
-        Ok(result)
-    }
-
-    async fn reflect(
-        &self,
-        result: &agent_core::ExecutionResult,
-    ) -> anyhow::Result<agent_core::Insight> {
-        self.reflector.reflect(result).await
-    }
-
-    async fn evolve(&mut self, insight: agent_core::Insight) -> anyhow::Result<()> {
-        self.evolution.update(insight).await
-    }
-
-    /// Custom run loop: adds result summarization after each iteration.
-    async fn run_loop(&mut self, ctx: agent_core::context::Context) -> anyhow::Result<()> {
-        self.emit(AgentEvent::AgentStarted {
-            name: "Hermes Agent".into(),
-        });
-
-        loop {
-            self.turn += 1;
-            self.emit(AgentEvent::TurnStarted { turn: self.turn });
-
-            if ctx.is_interactive() && self.event_tx.is_none() {
-                eprintln!("── 第 {} 轮 ──", self.turn);
-            }
-
-            let obs = self.observe(&ctx).await?;
-            if ctx.should_stop() {
-                break;
-            }
-
-            let user_input = obs.user_input.clone();
-
-            let plan = self.plan(obs).await?;
-            let result = self.execute(plan).await?;
-
-            self.emit(AgentEvent::ReflectPhaseStarted);
-            let insight = self.reflect(&result).await?;
-            self.emit(AgentEvent::ReflectPhaseComplete {
-                score: insight.score,
-                lesson: insight.lesson.clone(),
-            });
-
-            self.emit(AgentEvent::EvolvePhaseStarted);
-            self.evolve(insight).await?;
-            self.emit(AgentEvent::EvolvePhaseComplete);
-
-            // Summarize results in natural language
-            let summary = self.summarize_result(&result).await;
-            if let Ok(ref s) = summary {
-                self.emit(AgentEvent::SummaryReady { summary: s.clone() });
-                if self.event_tx.is_none() {
-                    eprintln!("\n\x1b[35m📝 {}\x1b[0m\n", s);
-                }
-                // Record conversation history for multi-turn context
-                self.conversation_history.push((user_input, s.clone()));
-                // Keep last 20 exchanges to bound memory
-                if self.conversation_history.len() > 20 {
-                    self.conversation_history.remove(0);
-                }
-            }
-
-            if ctx.should_stop() {
-                break;
-            }
-        }
-        self.emit(AgentEvent::AgentStopped);
-        Ok(())
-    }
-}
-
-impl SmallHermesAgent {
-    /// Send an event if a sender is configured.
-    fn emit(&self, event: AgentEvent) {
-        if let Some(ref tx) = self.event_tx {
-            if tx.send(event).is_err() {
-                tracing::warn!("Event channel closed — TUI observer may have disconnected");
-            }
-        }
-    }
-
-    /// Generate a natural-language summary of the execution for the user.
-    async fn summarize_result(
-        &self,
-        result: &agent_core::ExecutionResult,
-    ) -> anyhow::Result<String> {
-        let outputs: Vec<String> = result
-            .outputs
-            .iter()
-            .map(|o| format!("[{}] {}", if o.success { "OK" } else { "FAIL" }, o.content))
-            .collect();
-        let prompt = format!(
-            "Summarize the following execution results in one concise Chinese sentence. \
-             Focus on what was accomplished.\n\n{}",
-            outputs.join("\n")
-        );
-        let summary = self.llm.complete(prompt).await?;
-        Ok(summary.trim().to_string())
-    }
-}
-
 // ── Main ─────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -386,7 +294,62 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let cfg = Config::from_file(&cli.config)?;
+
+    if cli.gateway {
+        return run_gateway(&cli.gateway_config).await;
+    }
+
+    // ── Profile override: --profile dev → config/profiles/dev.toml ──
+    let config_path = if let Some(ref profile) = cli.profile {
+        let path = format!("config/profiles/{profile}.toml");
+        tracing::info!(profile = %profile, path = %path, "使用配置预设");
+        path
+    } else {
+        cli.config.clone()
+    };
+
+    let mut cfg = Config::from_file(&config_path)?;
+
+    // ── Apply CLI overrides to config ─────────────────────
+    if let Some(v) = cli.api_key {
+        cfg.llm.api_key = v;
+    }
+    if let Some(v) = cli.provider {
+        cfg.llm.provider = v;
+    }
+    if let Some(v) = cli.model {
+        cfg.llm.model = v;
+    }
+    if let Some(v) = cli.max_tokens {
+        cfg.llm.max_tokens = v;
+    }
+    if let Some(v) = cli.base_url {
+        cfg.llm.base_url = v;
+    }
+    if let Some(v) = cli.search_api_key {
+        cfg.search.api_key = Some(v);
+    }
+    if let Some(v) = cli.learning_rate {
+        cfg.learning_rate = v;
+    }
+    if let Some(v) = cli.max_concurrency {
+        cfg.max_concurrency = v;
+    }
+    if let Some(ref v) = cli.danger_mode {
+        cfg.guard.danger_mode = v.clone();
+    }
+    if let Some(v) = cli.max_step_retries {
+        cfg.max_step_retries = v;
+    }
+    if let Some(v) = cli.max_replans {
+        cfg.max_replans = v;
+    }
+    if let Some(v) = cli.compress_threshold {
+        cfg.compress_threshold = v;
+    }
+    if let Some(v) = cli.compress_keep_ratio {
+        cfg.compress_keep_ratio = v;
+    }
 
     // ── Assemble dependencies (matching arch.md Section 6) ────
     let memory: Arc<dyn agent_core::MemoryStore> = Arc::new(
@@ -449,14 +412,48 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let danger_guard = Arc::new(tools::DangerGuard::new(
+        tools::ConfirmationPolicy::from_str(&cfg.guard.danger_mode),
+        cfg.guard.dangerous_patterns.clone(),
+    ));
+
     let tools = Arc::new(tools::ToolRegistry::default());
-    tools.register(Arc::new(tools::BashTool));
+    tools.register(Arc::new(tools::ReplyTool));
+    tools.register(Arc::new(tools::BashTool::new(Arc::clone(&danger_guard))));
     tools.register(Arc::new(tools::ReadFileTool));
     tools.register(Arc::new(tools::WriteFileTool));
-    tools.register(Arc::new(tools::WebSearchTool::new(&tools::SearchConfig {
-        api_key: cfg.search.api_key.clone(),
-        endpoint: cfg.search.endpoint.clone(),
-    })));
+    if cfg.search.api_key.is_some() {
+        tools.register(Arc::new(tools::WebSearchTool::new(&tools::SearchConfig {
+            api_key: cfg.search.api_key.clone(),
+            endpoint: cfg.search.endpoint.clone(),
+        })));
+    } else {
+        tracing::info!("No search API key configured — web_search tool disabled");
+    }
+
+    // Discover and register plugins
+    for plugin_dir in &cfg.plugin_dirs {
+        match tools::discover_plugins(plugin_dir) {
+            Ok(plugins) => {
+                for (manifest, dir) in plugins {
+                    match manifest.plugin_type.as_str() {
+                        "shell" => {
+                            tools.register(Arc::new(tools::ShellPlugin::new(manifest)));
+                        }
+                        "script" => {
+                            tools.register(Arc::new(tools::ScriptPlugin::new(manifest, dir)));
+                        }
+                        other => {
+                            tracing::warn!(plugin_type = %other, name = %manifest.name, "未知插件类型");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(dir = %plugin_dir, error = %e, "插件目录扫描失败");
+            }
+        }
+    }
 
     let evolution = Arc::new(
         evolution::EvolutionEngine::load_from_file(
@@ -482,12 +479,10 @@ async fn main() -> anyhow::Result<()> {
     .with_streaming(true);
     planner.set_tools(tools.describe_all());
 
-    let mut scheduler = scheduler::Scheduler::new(Arc::clone(&tools), cfg.max_concurrency);
+    let mut scheduler = scheduler::Scheduler::new(Arc::clone(&tools), cfg.max_concurrency)
+        .with_max_retries(cfg.max_step_retries);
 
-    let reflector = if cfg.scorer.success_weight != 0.6
-        || cfg.scorer.latency_weight != 0.2
-    {
-        // Custom scorer config
+    let reflector = if cfg.scorer.success_weight != 0.6 || cfg.scorer.latency_weight != 0.2 {
         reflector::Reflector::with_scorer(
             Arc::clone(&llm) as Arc<dyn llm::LlmAdapter>,
             evolution::Scorer {
@@ -498,10 +493,10 @@ async fn main() -> anyhow::Result<()> {
             },
         )
     } else {
-        // Default scorer
         reflector::Reflector::new(Arc::clone(&llm) as Arc<dyn llm::LlmAdapter>)
     };
 
+    let usage_tracker = Arc::new(llm::UsageTracker::new(&cfg.llm.model));
     let evolution_handle = Arc::clone(&evolution);
 
     // ── Create event channel (TUI mode only) ────────────────
@@ -514,13 +509,38 @@ async fn main() -> anyhow::Result<()> {
         (None, None)
     };
 
+    // ── Knowledge base preload ─────────────────────────────
+    for kb_dir in &cli.knowledge_base {
+        tracing::info!(dir = %kb_dir, "预加载知识库...");
+        match memory::preload_knowledge_base(
+            kb_dir,
+            memory.as_ref(),
+            llm.as_ref(),
+            &|msg| tracing::info!(progress = %msg),
+        )
+        .await
+        {
+            Ok(stats) => {
+                tracing::info!(
+                    files = stats.files_found,
+                    chunks = stats.chunks_upserted,
+                    skipped = stats.files_skipped,
+                    "知识库加载完成"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(dir = %kb_dir, error = %e, "知识库加载失败");
+            }
+        }
+    }
+
     let tui_input = if cli.tui {
         Some(tui::TuiInput::new())
     } else {
         None
     };
 
-    let agent = SmallHermesAgent {
+    let mut agent = hermess_agent::SmallHermesAgent {
         planner,
         scheduler,
         reflector,
@@ -528,28 +548,89 @@ async fn main() -> anyhow::Result<()> {
         working_memory: memory::WorkingMemory::new(cfg.working_memory_size),
         llm: Arc::clone(&llm) as Arc<dyn llm::LlmAdapter>,
         turn: 0,
+        usage_tracker: Arc::clone(&usage_tracker),
+        max_replans: cfg.max_replans,
+        compress_threshold: cfg.compress_threshold,
+        compress_keep_ratio: cfg.compress_keep_ratio,
         event_tx,
         conversation_history: Vec::new(),
         tui_input: tui_input.clone(),
     };
 
+    let tui_interactive = cli.tui && cli.task.is_none();
+    let effective_interactive = cli.interactive || tui_interactive;
+
     tracing::info!(
         "Hermes agent starting: provider={}, model={}, config={}, interactive={}, tui={}",
         cfg.llm.provider,
         cfg.llm.model,
-        cli.config,
-        cli.interactive,
+        config_path,
+        effective_interactive,
         cli.tui,
     );
 
+    // ── Resume session if requested ────────────────────────
+    if let Some(ref resume_path) = cli.resume {
+        agent.restore_state(resume_path)?;
+    }
+
     // ── Run ──────────────────────────────────────────────────
+    let save_path = cli.save.clone();
+
+    if cli.mcp_server {
+        // MCP stdio server mode — exposes tools via the Model Context Protocol
+        let tools_arc = Arc::clone(&tools);
+        let mcp_handler = HermesMcpHandler { tools: tools_arc };
+        tracing::info!("Starting MCP stdio server");
+        mcp::run_stdio_server(Box::new(mcp_handler)).await?;
+        return Ok(());
+    }
+
+    if let Some(port) = cli.serve {
+        // HTTP server mode — runs until process is killed, then saves state
+        tracing::info!("Starting HTTP server on port {}", port);
+        run_server(agent, port).await?;
+        if let Err(e) = evolution_handle.save_to_file(".hermes_evolution.json") {
+            tracing::warn!(error = %e, "Failed to save evolution state");
+        }
+        tracing::info!(usage = %usage_tracker.snapshot(), "Hermes server stopped.");
+        return Ok(());
+    }
+
+    if let Some(ref cron_expr) = cli.schedule {
+        let schedule = scheduler::CronSchedule::parse(cron_expr)
+            .map_err(|e| anyhow::anyhow!("无效的 cron 表达式: {e}"))?;
+        tracing::info!(cron = %cron_expr, "定时调度模式启动");
+        loop {
+            let now = chrono::Utc::now();
+            let wait_secs = schedule.next_in_secs(&now)
+                .unwrap_or(3600)
+                .min(86400); // cap at 24h
+
+            tracing::info!(
+                next_run = %(now + chrono::Duration::seconds(wait_secs)),
+                wait_secs = wait_secs,
+                "等待下次执行"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(wait_secs as u64)).await;
+
+            let task = cli.task.clone().unwrap_or_else(|| "scheduled run".into());
+            let ctx = agent_core::context::Context::new(Some(task));
+            agent = agent_core::runner::run_agent(agent, ctx).await?;
+
+            if let Err(e) = evolution_handle.save_to_file(".hermes_evolution.json") {
+                tracing::warn!(error = %e, "Failed to save evolution state");
+            }
+        }
+    }
+
     if cli.tui {
-        let ctx = if cli.interactive {
+        let ctx = if effective_interactive {
             agent_core::context::Context::interactive()
         } else {
             agent_core::context::Context::new(cli.task)
         };
-        tui::run_tui(
+        agent = tui::run_tui(
             agent,
             ctx,
             event_rx.unwrap(),
@@ -568,11 +649,17 @@ async fn main() -> anyhow::Result<()> {
         } else {
             agent_core::context::Context::new(cli.task)
         };
-        agent_core::runner::run_agent(agent, ctx).await?;
+        agent = agent_core::runner::run_agent(agent, ctx).await?;
     } else {
-        // Continuous loop mode (no task, not interactive)
         let ctx = agent_core::context::Context::new(None);
-        agent_core::runner::run_agent(agent, ctx).await?;
+        agent = agent_core::runner::run_agent(agent, ctx).await?;
+    }
+
+    // ── Save session if requested ──────────────────────────
+    if let Some(ref save_path) = save_path {
+        if let Err(e) = agent.save_state(save_path) {
+            tracing::warn!(error = %e, "Failed to save session");
+        }
     }
 
     // Save evolution state on exit
@@ -581,6 +668,137 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("Failed to save evolution state: {e}");
     }
 
-    tracing::info!("Hermes Agent stopped.");
+    tracing::info!(usage = %usage_tracker.snapshot(), "Hermes Agent stopped.");
     Ok(())
+}
+
+// ── HTTP Server mode ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RunRequest {
+    task: String,
+}
+
+async fn run_server(
+    agent: hermess_agent::SmallHermesAgent,
+    port: u16,
+) -> anyhow::Result<()> {
+    use std::net::SocketAddr;
+
+    let agent_arc = Arc::new(Mutex::new(agent));
+
+    let app = Router::new()
+        .route("/health", get(health_handler))
+        .route("/agent/run", post(run_agent_handler))
+        .with_state(agent_arc);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    tracing::info!(%addr, "HTTP server starting");
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn health_handler() -> &'static str {
+    "ok"
+}
+
+async fn run_agent_handler(
+    AxumState(agent_arc): AxumState<Arc<Mutex<hermess_agent::SmallHermesAgent>>>,
+    Json(req): Json<RunRequest>,
+) -> impl IntoResponse {
+    let ctx = agent_core::context::Context::new(Some(req.task));
+    let agent_guard = agent_arc.lock().await;
+    let agent_clone = Arc::clone(&agent_arc);
+    drop(agent_guard);
+
+    let handle = tokio::spawn(async move {
+        let mut ag = agent_clone.lock().await;
+        ag.run_loop(ctx).await
+    });
+
+    match handle.await {
+        Ok(Ok(())) => {
+            (StatusCode::OK, Json(serde_json::json!({
+                "summary": "任务已完成。",
+                "turn": 0,
+                "success": true,
+            }))).into_response()
+        }
+        Ok(Err(e)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "summary": format!("执行错误: {:#}", e),
+                "turn": 0,
+                "success": false,
+            }))).into_response()
+        }
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "summary": format!("任务异常: {:#}", e),
+                "turn": 0,
+                "success": false,
+            }))).into_response()
+        }
+    }
+}
+
+// ── Gateway ────────────────────────────────────────────────────────
+
+async fn run_gateway(config_path: &str) -> anyhow::Result<()> {
+    let cfg = hermess_gateway::config::GatewayConfig::from_file(config_path)?;
+    let listen_addr = cfg.gateway.listen.clone();
+    let gateway = hermess_gateway::gateway::Gateway::new(cfg);
+
+    tracing::info!(addr = %listen_addr, "Hermess Gateway starting");
+    let app = hermess_gateway::server::build_router(gateway);
+    let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+// ── MCP Handler ──────────────────────────────────────────────────
+
+struct HermesMcpHandler {
+    tools: Arc<tools::ToolRegistry>,
+}
+
+#[async_trait::async_trait]
+impl mcp::McpHandler for HermesMcpHandler {
+    async fn list_tools(&self) -> anyhow::Result<Vec<mcp::ToolDef>> {
+        let tools = self.tools.describe_all();
+        let defs: Vec<mcp::ToolDef> = tools
+            .into_iter()
+            .map(|t| mcp::ToolDef {
+                name: t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                description: t
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                input_schema: t.get("schema").cloned().unwrap_or(serde_json::json!({})),
+            })
+            .collect();
+        Ok(defs)
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Option<serde_json::Value>,
+    ) -> anyhow::Result<mcp::ToolCallResult> {
+        let args = args.unwrap_or(serde_json::json!({}));
+        let output = self.tools.call(name, args).await?;
+        Ok(mcp::ToolCallResult {
+            content: vec![mcp::ToolCallContent {
+                content_type: "text".into(),
+                text: output.content,
+            }],
+            is_error: Some(!output.success),
+        })
+    }
 }

@@ -60,6 +60,7 @@ llm = { path = "crates/llm" }
 scheduler = { path = "crates/scheduler" }
 tui = { path = "crates/tui" }
 mcp = { path = "crates/mcp" }
+hermess-gateway = { path = "crates/hermess-gateway" }
 crossterm.workspace = true
 tokio.workspace = true
 clap.workspace = true

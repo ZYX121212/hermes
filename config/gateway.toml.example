@@ -1,0 +1,60 @@
+# Hermess Gateway configuration
+[gateway]
+listen = "0.0.0.0:9090"
+api_key = "sk-gateway-local"
+default_mode = "cost-first"
+
+# ── Default models ──
+[[gateway.models]]
+name = "qwen-3-turbo"
+provider = "openai"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "${QWEN_API_KEY}"
+cost_per_1m_input = 0.3
+cost_per_1m_output = 0.6
+capability = { reasoning = 0.3, coding = 0.5, creative = 0.4, knowledge = 0.6, speed_ms = 50 }
+tags = ["fast", "classifier"]
+
+[[gateway.models]]
+name = "deepseek-v4"
+provider = "openai"
+base_url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+cost_per_1m_input = 0.5
+cost_per_1m_output = 2.0
+capability = { reasoning = 0.6, coding = 0.8, creative = 0.5, knowledge = 0.7, speed_ms = 200 }
+tags = ["general", "coding"]
+
+[[gateway.models]]
+name = "claude-opus-4-6"
+provider = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+cost_per_1m_input = 15.0
+cost_per_1m_output = 75.0
+capability = { reasoning = 0.95, coding = 0.9, creative = 0.85, knowledge = 0.9, speed_ms = 2000 }
+tags = ["reasoning", "complex"]
+
+# ── Classifier ──
+[gateway.classifier]
+model = "qwen-3-turbo"
+timeout_ms = 50
+
+# ── SHG ──
+[gateway.shg]
+enabled = true
+prompt_len_threshold = 200
+hard_patterns = [
+    "时间复杂度",
+    "formal proof",
+    "prove",
+    "security audit",
+    "cryptograph",
+    "distributed consensus",
+]
+force_model = "claude-opus-4-6"
+
+# ── Token optimizer (optional, disabled by default) ──
+[gateway.optimizer]
+decompose_enabled = false
+distill_enabled = false
+distill_keep_ratio = 0.2
