@@ -61,13 +61,13 @@ pub struct ModelEntry {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RouteTarget {
     Single(String),
     Decomposed { critical: String, regular: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Classification {
     pub complexity: f64,
     pub is_short_hard: bool,
@@ -80,7 +80,7 @@ impl Default for Classification {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RoutingDecision {
     pub target: RouteTarget,
     pub reasoning: String,
@@ -115,7 +115,7 @@ pub struct ChatCompletionResponse {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChatChoice>,
-    pub usage: UsageData,
+    pub usage: Option<UsageData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,13 +159,13 @@ pub struct ErrorDetail {
     pub code: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DecomposedPrompt {
     pub critical: String,
     pub regular: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GatewayOutput {
     Single {
         model: String,
