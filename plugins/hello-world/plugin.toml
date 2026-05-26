@@ -1,0 +1,11 @@
+# plugins/hello-world/plugin.toml
+# Example plugin: prints a greeting with configurable name.
+name = "greet"
+description = "Returns a friendly greeting for the given name. Example plugin."
+type = "shell"
+command = "echo 'Hello, $ARG.name! Welcome to Hermes plugin system.'"
+
+[schema]
+type = "object"
+properties = { name = { type = "string", description = "Name to greet" } }
+required = ["name"]

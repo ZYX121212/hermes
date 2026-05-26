@@ -1,0 +1,27 @@
+[package]
+name = "hermess-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+planner = { path = "../planner" }
+scheduler = { path = "../scheduler" }
+reflector = { path = "../reflector" }
+evolution = { path = "../evolution" }
+memory = { path = "../memory" }
+llm = { path = "../llm" }
+tui = { path = "../tui", optional = true }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+
+[features]
+default = []
+tui = ["dep:tui"]

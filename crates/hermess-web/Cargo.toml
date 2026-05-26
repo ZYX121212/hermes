@@ -1,0 +1,49 @@
+[package]
+name = "hermess-web"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hermess-webd"
+path = "src/main.rs"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+hermess-agent = { path = "../hermess-agent", features = ["tui"] }
+planner = { path = "../planner" }
+scheduler = { path = "../scheduler" }
+reflector = { path = "../reflector" }
+evolution = { path = "../evolution" }
+memory = { path = "../memory" }
+llm = { path = "../llm" }
+tools = { path = "../tools" }
+tui = { path = "../tui" }
+
+clap = { version = "4", features = ["derive"] }
+axum = "0.8"
+tokio = { workspace = true, features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+
+# XML parsing
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+# WeChat crypto
+aes = "0.8"
+cbc = "0.1"
+sha1 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.8"

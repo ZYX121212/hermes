@@ -1,0 +1,16 @@
+[package]
+name = "llm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }

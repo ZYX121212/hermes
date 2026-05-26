@@ -1,0 +1,24 @@
+learning_rate = 0.1
+working_memory_size = 100
+max_concurrency = 10
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20251001"
+max_tokens = 4096
+
+[qdrant]
+url = "http://localhost:6334"
+collection = "hermes_memory"
+embedding_dim = 1024
+
+[search]
+# Brave Search API key (optional — set to enable web search)
+# api_key = "BSA-..."
+endpoint = "https://api.search.brave.com/res/v1/web/search"
+
+[scorer]
+success_weight = 0.6
+latency_weight = 0.2
+quality_weight = 0.2
+latency_target_ms = 2000

@@ -1,0 +1,37 @@
+# Hermes Web Daemon — 企业微信配置
+learning_rate = 0.1
+working_memory_size = 100
+max_concurrency = 10
+
+[wechat]
+corp_id = "ww..."           # 企业 ID
+agent_id = "1000001"        # 应用 AgentID
+secret = "..."              # 应用 Secret
+token = "..."               # 回调 Token（自定义，与后台一致）
+encoding_aes_key = "..."    # 回调 EncodingAESKey（43 字符）
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20251001"
+max_tokens = 4096
+api_key = ""
+base_url = ""
+
+[qdrant]
+url = "http://localhost:6334"
+collection = "hermes_memory"
+embedding_dim = 1024
+
+[search]
+api_key = ""
+endpoint = "https://api.search.brave.com/res/v1/web/search"
+
+[scorer]
+success_weight = 0.6
+latency_weight = 0.2
+quality_weight = 0.2
+latency_target_ms = 2000

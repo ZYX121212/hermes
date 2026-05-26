@@ -1,0 +1,23 @@
+# Hermes Agent — Production Configuration
+learning_rate = 0.05
+working_memory_size = 500
+max_concurrency = 50
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20251001"
+max_tokens = 8192
+
+[qdrant]
+url = "http://localhost:6334"
+collection = "hermes_memory_prod"
+embedding_dim = 1024
+
+[search]
+endpoint = "https://api.search.brave.com/res/v1/web/search"
+
+[scorer]
+success_weight = 0.7
+latency_weight = 0.15
+quality_weight = 0.15
+latency_target_ms = 1000

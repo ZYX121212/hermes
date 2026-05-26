@@ -1,0 +1,20 @@
+# Hermes — 生产环境配置
+# 使用: hermes --profile prod
+
+learning_rate = 0.05         # 更谨慎的探索
+working_memory_size = 200
+max_concurrency = 10
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-6-20250514"
+max_tokens = 8192
+
+[guard]
+danger_mode = "deny"         # 生产环境自动拒绝危险命令
+
+[scorer]
+success_weight = 0.8
+latency_weight = 0.1
+quality_weight = 0.1
+latency_target_ms = 5000

@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target/
+
+# Runtime data
+.hermes_evolution.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config files with secrets (use .example templates)
+config/*.toml
+config.json
+
+# Environment
+.env
+.env.local
+
+# Claude Code
+.claude/
+
+# Superpowers
+.superpowers/
