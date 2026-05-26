@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/agent-core",
+    "crates/hermess-agent",
     "crates/evolution",
     "crates/planner",
     "crates/memory",
@@ -9,6 +10,9 @@ members = [
     "crates/llm",
     "crates/scheduler",
     "crates/tui",
+    "crates/hermess-web",
+    "crates/mcp",
+    "crates/hermess-gateway",
 ]
 resolver = "2"
 
@@ -46,6 +50,7 @@ path = "src/main.rs"
 
 [dependencies]
 agent-core = { path = "crates/agent-core" }
+hermess-agent = { path = "crates/hermess-agent", features = ["tui"] }
 evolution = { path = "crates/evolution" }
 planner = { path = "crates/planner" }
 memory = { path = "crates/memory" }
@@ -54,6 +59,7 @@ reflector = { path = "crates/reflector" }
 llm = { path = "crates/llm" }
 scheduler = { path = "crates/scheduler" }
 tui = { path = "crates/tui" }
+mcp = { path = "crates/mcp" }
 crossterm.workspace = true
 tokio.workspace = true
 clap.workspace = true
@@ -67,3 +73,6 @@ async-trait.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 futures.workspace = true
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+tower = "0.5"
