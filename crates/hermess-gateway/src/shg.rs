@@ -4,10 +4,10 @@ use crate::config::ShgConfig;
 /// deep reasoning and should skip the lightweight classifier entirely.
 #[derive(Debug, Clone)]
 pub struct ShgDetector {
-    enabled: bool,
-    prompt_len_threshold: usize,
-    patterns: Vec<String>,
-    force_model: Option<String>,
+    pub enabled: bool,
+    pub prompt_len_threshold: usize,
+    pub patterns: Vec<String>,
+    pub force_model: Option<String>,
 }
 
 impl ShgDetector {
