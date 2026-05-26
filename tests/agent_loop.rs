@@ -2,13 +2,13 @@
 // Integration tests for the full five-step agent loop.
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent_core::agent::HermesAgent;
 use agent_core::context::Context;
+use async_trait::async_trait;
 use evolution::{EvolutionEngine, Scorer};
 use llm::LlmAdapter;
-use memory::WorkingMemory;
 use memory::MockMemoryStore;
+use memory::WorkingMemory;
 use planner::Planner;
 use reflector::Reflector;
 use scheduler::Scheduler;
@@ -81,10 +81,7 @@ impl HermesAgent for TestAgent {
         self.planner.plan(obs).await
     }
 
-    async fn execute(
-        &self,
-        plan: agent_core::Plan,
-    ) -> anyhow::Result<agent_core::ExecutionResult> {
+    async fn execute(&self, plan: agent_core::Plan) -> anyhow::Result<agent_core::ExecutionResult> {
         let result = self.scheduler.execute(&plan).await?;
         // Store step outputs in working memory (mirrors SmallHermesAgent behavior)
         for output in &result.outputs {
@@ -120,7 +117,7 @@ fn build_test_agent(plan_response: &str) -> TestAgent {
     let mut planner = Planner::new(Arc::clone(&llm), Arc::clone(&evolution));
 
     let tool_registry = Arc::new(ToolRegistry::default());
-    tool_registry.register(Arc::new(tools::BashTool));
+    tool_registry.register(Arc::new(tools::BashTool::unguarded()));
     planner.set_tools(tool_registry.describe_all());
 
     let scheduler = Scheduler::new(Arc::clone(&tool_registry), 4);
@@ -219,9 +216,15 @@ async fn test_full_loop_single_iteration() {
     agent.evolve(insight).await.unwrap();
 
     // After one iteration, the evolution engine should have learned something
-    assert!(agent.evolution.strategy_count() > 0, "Evolution engine should have registered at least one strategy");
+    assert!(
+        agent.evolution.strategy_count() > 0,
+        "Evolution engine should have registered at least one strategy"
+    );
     let weights = agent.evolution.all_weights();
-    assert!(!weights.is_empty(), "Should have at least one strategy weight");
+    assert!(
+        !weights.is_empty(),
+        "Should have at least one strategy weight"
+    );
 
     // Working memory should have an entry from the execution
     assert!(!agent.working_memory.is_empty());
@@ -246,9 +249,16 @@ async fn test_execution_result_reflects_partial_failure() {
     let result = agent.execute(plan).await.unwrap();
 
     // The bash command "false" exits with code 1
-    assert!(!result.success, "Expected execution to fail with 'false' command");
+    assert!(
+        !result.success,
+        "Expected execution to fail with 'false' command"
+    );
 
     let insight = agent.reflect(&result).await.unwrap();
     // Score should be negative for a failed execution
-    assert!(insight.score < 0.0, "Expected negative score for failure, got {}", insight.score);
+    assert!(
+        insight.score < 0.0,
+        "Expected negative score for failure, got {}",
+        insight.score
+    );
 }

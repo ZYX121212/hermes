@@ -1,8 +1,8 @@
 // crates/agent-core/src/agent.rs
-use async_trait::async_trait;
-use anyhow::Result;
-use crate::{ExecutionResult, Insight, Observation, Plan};
 use crate::context::Context;
+use crate::{ExecutionResult, Insight, Observation, Plan};
+use anyhow::Result;
+use async_trait::async_trait;
 
 /// Core contract for a Hermes agent.
 /// All five steps of the self-evolution loop, plus a default run_loop implementation.
@@ -18,17 +18,22 @@ pub trait HermesAgent: Send + Sync + 'static {
     /// until the context signals a stop.
     async fn run_loop(&mut self, ctx: Context) -> Result<()> {
         loop {
-            tracing::info!("Turn starting: observe phase");
-            let obs = self.observe(&ctx).await?;
+            ctx.advance_iteration();
             if ctx.should_stop() {
-                tracing::info!("Stop signaled after observe, exiting loop");
+                tracing::info!("Stop signaled at start, exiting loop");
                 break;
             }
+            tracing::info!("Turn starting: observe phase");
+            let obs = self.observe(&ctx).await?;
             tracing::info!("Plan phase");
             let plan = self.plan(obs).await?;
             tracing::info!(steps = plan.steps.len(), "Execute phase");
             let result = self.execute(plan).await?;
-            tracing::info!(success = result.success, duration_ms = result.duration_ms, "Reflect phase");
+            tracing::info!(
+                success = result.success,
+                duration_ms = result.duration_ms,
+                "Reflect phase"
+            );
             let insight = self.reflect(&result).await?;
             tracing::info!(score = insight.score, strategy = %insight.strategy_id, "Evolve phase");
             self.evolve(insight).await?;

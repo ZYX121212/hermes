@@ -18,6 +18,7 @@ pub struct Scheduler {
     registry: Arc<ToolRegistry>,
     concurrency: ConcurrencyLimit,
     event_tx: Option<UnboundedSender<AgentEvent>>,
+    max_retries: usize,
 }
 
 impl Scheduler {
@@ -26,7 +27,14 @@ impl Scheduler {
             registry,
             concurrency: ConcurrencyLimit::new(max_concurrent),
             event_tx: None,
+            max_retries: 3,
         }
+    }
+
+    /// Set the maximum number of retries per step (default: 3).
+    pub fn with_max_retries(mut self, n: usize) -> Self {
+        self.max_retries = n;
+        self
     }
 
     /// Set an event sender for TUI progress reporting.
@@ -36,10 +44,7 @@ impl Scheduler {
 
     /// Execute all steps in a plan, grouped into topological layers.
     /// Within each layer, steps run concurrently (bounded by the semaphore).
-    pub async fn execute(
-        &self,
-        plan: &agent_core::Plan,
-    ) -> Result<ExecutionResult> {
+    pub async fn execute(&self, plan: &agent_core::Plan) -> Result<ExecutionResult> {
         let start = Instant::now();
         let layers = plan.dag.topological_layers(&plan.steps);
 
@@ -52,13 +57,16 @@ impl Scheduler {
         let mut all_outputs: Vec<agent_core::StepOutput> = Vec::new();
 
         // Build 0-based index → step_id mapping for {{step_N.output}} resolution
-        let step_index: HashMap<usize, Uuid> =
-            plan.steps.iter().enumerate().map(|(i, s)| (i, s.id)).collect();
+        let step_index: HashMap<usize, Uuid> = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i, s.id))
+            .collect();
 
         for (layer_idx, layer) in layers.iter().enumerate() {
             // Snapshot completed outputs visible to this layer (read-only, shared across futures)
-            let visible: Arc<HashMap<Uuid, agent_core::StepOutput>> =
-                Arc::new(completed.clone());
+            let visible: Arc<HashMap<Uuid, agent_core::StepOutput>> = Arc::new(completed.clone());
 
             let futs: Vec<_> = layer
                 .iter()
@@ -70,6 +78,8 @@ impl Scheduler {
                     let layer = layer_idx;
                     let visible = Arc::clone(&visible);
                     let step_index = step_index.clone();
+                    let max_retries = self.max_retries;
+                    let tool_candidates = step.tool_candidates.clone();
                     async move {
                         // Resolve {{step_N.output}} references in args
                         step.args = resolve_args(&step.args, &step_index, &visible);
@@ -88,6 +98,7 @@ impl Scheduler {
                             Err(e) => {
                                 return agent_core::StepOutput {
                                     step_id: step.id,
+                                    tool: step.tool.clone(),
                                     success: false,
                                     content: format!("{e}"),
                                     duration_ms: 0,
@@ -100,6 +111,7 @@ impl Scheduler {
                         let step_out = match out {
                             Ok(tool_out) => agent_core::StepOutput {
                                 step_id: step.id,
+                                tool: step.tool.clone(),
                                 success: tool_out.success,
                                 content: tool_out.content,
                                 duration_ms: duration,
@@ -122,54 +134,128 @@ impl Scheduler {
                                 );
                                 agent_core::StepOutput {
                                     step_id: step.id,
+                                    tool: step.tool.clone(),
                                     success: false,
                                     content: err_msg,
                                     duration_ms: duration,
                                 }
-                            },
+                            }
                         };
 
-                        // Retry once on failure with error context
+                        // Retry loop with configurable max_retries, then fallback tools
                         let final_output = if !step_out.success {
-                            let mut retry_args = step.args.clone();
-                            if let Some(obj) = retry_args.as_object_mut() {
-                                obj.insert(
-                                    "_retry".into(),
-                                    serde_json::json!(true),
-                                );
-                                obj.insert(
-                                    "_previous_error".into(),
-                                    serde_json::json!(step_out.content),
-                                );
-                            }
-                            let _permit = match concurrency.acquire().await {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    return agent_core::StepOutput {
-                                        step_id: step.id,
-                                        success: false,
-                                        content: format!("retry aborted: {e}"),
-                                        duration_ms: duration,
-                                    };
+                            let mut total_dur = duration;
+                            let mut last_out = step_out;
+
+                            // Retry primary tool up to max_retries times
+                            for _ in 0..max_retries {
+                                let mut retry_args = step.args.clone();
+                                if let Some(obj) = retry_args.as_object_mut() {
+                                    obj.insert("_retry".into(), serde_json::json!(true));
+                                    obj.insert("_previous_error".into(), serde_json::json!(last_out.content));
                                 }
-                            };
-                            let retry_start = Instant::now();
-                            let retry_out = registry.call(&step.tool, retry_args).await;
-                            let retry_dur = retry_start.elapsed().as_millis() as u64;
-                            match retry_out {
-                                Ok(tool_out) => agent_core::StepOutput {
-                                    step_id: step.id,
-                                    success: tool_out.success,
-                                    content: tool_out.content,
-                                    duration_ms: duration + retry_dur,
-                                },
-                                Err(e) => agent_core::StepOutput {
-                                    step_id: step.id,
-                                    success: false,
-                                    content: format!("retry also failed: {e}"),
-                                    duration_ms: duration + retry_dur,
-                                },
+                                let _permit = match concurrency.acquire().await {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        last_out = agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: false,
+                                            content: format!("retry aborted: {e}"),
+                                            duration_ms: total_dur,
+                                        };
+                                        break;
+                                    }
+                                };
+                                let retry_start = Instant::now();
+                                let retry_out = registry.call(&step.tool, retry_args).await;
+                                let retry_dur = retry_start.elapsed().as_millis() as u64;
+                                total_dur += retry_dur;
+                                match retry_out {
+                                    Ok(tool_out) if tool_out.success => {
+                                        last_out = agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: true,
+                                            content: tool_out.content,
+                                            duration_ms: total_dur,
+                                        };
+                                        break;
+                                    }
+                                    Ok(tool_out) => {
+                                        last_out = agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: false,
+                                            content: tool_out.content,
+                                            duration_ms: total_dur,
+                                        };
+                                    }
+                                    Err(e) => {
+                                        last_out = agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: false,
+                                            content: format!("retry failed: {e}"),
+                                            duration_ms: total_dur,
+                                        };
+                                    }
+                                }
                             }
+
+                            // Try fallback tools from tool_candidates
+                            if !last_out.success {
+                                for candidate_tool in &tool_candidates {
+                                    let _permit = match concurrency.acquire().await {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            last_out = agent_core::StepOutput {
+                                                step_id: step.id,
+                                                tool: candidate_tool.clone(),
+                                                success: false,
+                                                content: format!("candidate aborted: {e}"),
+                                                duration_ms: total_dur,
+                                            };
+                                            break;
+                                        }
+                                    };
+                                    let c_start = Instant::now();
+                                    let c_out = registry.call(candidate_tool, step.args.clone()).await;
+                                    let c_dur = c_start.elapsed().as_millis() as u64;
+                                    total_dur += c_dur;
+                                    match c_out {
+                                        Ok(tool_out) if tool_out.success => {
+                                            last_out = agent_core::StepOutput {
+                                                step_id: step.id,
+                                                tool: candidate_tool.clone(),
+                                                success: true,
+                                                content: tool_out.content,
+                                                duration_ms: total_dur,
+                                            };
+                                            break;
+                                        }
+                                        Ok(tool_out) => {
+                                            last_out = agent_core::StepOutput {
+                                                step_id: step.id,
+                                                tool: candidate_tool.clone(),
+                                                success: false,
+                                                content: tool_out.content,
+                                                duration_ms: total_dur,
+                                            };
+                                        }
+                                        Err(e) => {
+                                            last_out = agent_core::StepOutput {
+                                                step_id: step.id,
+                                                tool: candidate_tool.clone(),
+                                                success: false,
+                                                content: format!("candidate failed: {e}"),
+                                                duration_ms: total_dur,
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                            last_out
                         } else {
                             step_out
                         };
@@ -192,12 +278,10 @@ impl Scheduler {
             }
         }
 
-        let all_succeeded = plan.steps.iter().all(|s| {
-            completed
-                .get(&s.id)
-                .map(|o| o.success)
-                .unwrap_or(false)
-        });
+        let all_succeeded = plan
+            .steps
+            .iter()
+            .all(|s| completed.get(&s.id).map(|o| o.success).unwrap_or(false));
 
         self.emit(AgentEvent::ExecutePhaseComplete {
             all_success: all_succeeded,
@@ -240,13 +324,11 @@ fn resolve_args(
             }
             serde_json::Value::Object(resolved)
         }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(
-                arr.iter()
-                    .map(|v| resolve_args(v, step_index, completed))
-                    .collect(),
-            )
-        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|v| resolve_args(v, step_index, completed))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -364,6 +446,8 @@ mod tests {
             args: serde_json::json!({}),
             depends,
             strategy: "test".into(),
+            tool_candidates: vec![],
+            delegable: false,
         }
     }
 
@@ -371,7 +455,10 @@ mod tests {
     async fn test_execute_single_step() {
         let registry = Arc::new(tools::ToolRegistry::default());
         let order = Arc::new(AtomicU32::new(0));
-        registry.register(Arc::new(OrderRecordingTool::new("mock", Arc::clone(&order))));
+        registry.register(Arc::new(OrderRecordingTool::new(
+            "mock",
+            Arc::clone(&order),
+        )));
 
         let step_id = uuid::Uuid::new_v4();
         let steps = vec![make_step(step_id, "mock", vec![])];
@@ -389,7 +476,10 @@ mod tests {
     async fn test_execute_dependent_steps_ordered() {
         let registry = Arc::new(tools::ToolRegistry::default());
         let order = Arc::new(AtomicU32::new(0));
-        registry.register(Arc::new(OrderRecordingTool::new("mock", Arc::clone(&order))));
+        registry.register(Arc::new(OrderRecordingTool::new(
+            "mock",
+            Arc::clone(&order),
+        )));
 
         let step0 = uuid::Uuid::new_v4();
         let step1 = uuid::Uuid::new_v4();
@@ -413,7 +503,10 @@ mod tests {
     async fn test_execute_independent_steps_concurrent() {
         let registry = Arc::new(tools::ToolRegistry::default());
         let order = Arc::new(AtomicU32::new(0));
-        registry.register(Arc::new(OrderRecordingTool::new("mock", Arc::clone(&order))));
+        registry.register(Arc::new(OrderRecordingTool::new(
+            "mock",
+            Arc::clone(&order),
+        )));
 
         let s0 = uuid::Uuid::new_v4();
         let s1 = uuid::Uuid::new_v4();
@@ -441,7 +534,10 @@ mod tests {
     async fn test_execution_duration_is_measured() {
         let registry = Arc::new(tools::ToolRegistry::default());
         let order = Arc::new(AtomicU32::new(0));
-        registry.register(Arc::new(OrderRecordingTool::new("mock", Arc::clone(&order))));
+        registry.register(Arc::new(OrderRecordingTool::new(
+            "mock",
+            Arc::clone(&order),
+        )));
 
         let step_id = uuid::Uuid::new_v4();
         let steps = vec![make_step(step_id, "mock", vec![])];

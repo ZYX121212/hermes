@@ -2,12 +2,13 @@
 // Full-screen overlay for inspecting complete step output.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::state::{render_scrollbar, StepOutputOverlay};
+use crate::theme;
 
 pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay) {
     // Clear entire area
@@ -34,45 +35,51 @@ pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay
         .unwrap_or_else(|| "N/A".to_string());
 
     let title = format!(
-        " {} {} | {} | {} | Esc/Enter/q 关闭 ",
+        "{} {}  {}  {}  Esc/Enter/q 关闭",
         status_icon, overlay.tool, short_id, duration_str,
     );
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(title, Style::default().fg(Color::White)));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER_FOCUSED))
+        .style(Style::default().bg(theme::PANEL))
+        .title(theme::title_line(title, theme::CYAN));
 
     let inner = block.inner(overlay_rect);
-    let viewport_h = inner.height.saturating_sub(2); // info + separator lines above scrollable content
+    let viewport_h = inner.height;
 
     let mut lines: Vec<Line> = Vec::new();
 
     // Info line
     lines.push(Line::from(Span::styled(
         format!(
-            "Tool: {}  |  Duration: {}  |  Status: {}",
+            " Tool {}   Duration {}   Status {}",
             overlay.tool, duration_str, status_icon
         ),
-        Style::default().fg(Color::DarkGray),
+        Style::default()
+            .fg(theme::MUTED)
+            .bg(theme::PANEL)
+            .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(Span::styled(
         "─".repeat(inner.width.saturating_sub(2).max(20) as usize),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::BORDER).bg(theme::PANEL),
     )));
 
     // Content lines (preserving newlines from original output)
     for line in overlay.full_content.lines() {
         lines.push(Line::from(Span::styled(
             line.to_string(),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme::TEXT).bg(theme::PANEL),
         )));
     }
 
-    let content_height = lines.len().saturating_sub(2);
+    let content_height = lines.len();
 
     let para = Paragraph::new(lines)
         .block(block)
+        .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .scroll((overlay.scroll, 0));
 
     frame.render_widget(para, overlay_rect);
@@ -82,7 +89,12 @@ pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay
         let bar = render_scrollbar(overlay.scroll, content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
-            .map(|ch| Line::from(Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))))
+            .map(|ch| {
+                Line::from(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+                ))
+            })
             .collect();
         let bar_rect = Rect {
             x: overlay_rect.x + overlay_rect.width.saturating_sub(1),

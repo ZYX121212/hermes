@@ -61,7 +61,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         Style::default().fg(phase_color).bg(theme::BG),
     );
     let phase = Span::styled(
-        format!("{}", phase_str),
+        phase_str.to_string(),
         Style::default()
             .fg(phase_color)
             .bg(theme::BG)

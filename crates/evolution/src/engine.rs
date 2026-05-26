@@ -60,16 +60,18 @@ impl EvolutionEngine {
         let lr_t = adaptive_lr(base_lr, n);
         let delta = insight.score * lr_t;
 
-        // 3. Lock-free strategy weight update with clamping
+        // 3. Strategy weight update — get_mut holds the shard lock for atomic read-modify-write
         let strategy_id = insight.strategy_id.clone();
-        let old_weight = self.strategy_weights
-            .get(&strategy_id)
-            .map(|w| *w);
-        self.strategy_weights
-            .entry(strategy_id.clone())
-            .and_modify(|w| *w = clamp(*w + delta, -10.0, 10.0))
-            .or_insert(clamp(delta, -10.0, 10.0));
-        let new_weight = self.strategy_weights
+        let old_weight = self.strategy_weights.get(&strategy_id).map(|w| *w);
+        match self.strategy_weights.get_mut(&strategy_id) {
+            Some(mut w) => *w = clamp(*w + delta, -10.0, 10.0),
+            None => {
+                self.strategy_weights
+                    .insert(strategy_id.clone(), clamp(delta, -10.0, 10.0));
+            }
+        }
+        let new_weight = self
+            .strategy_weights
             .get(&strategy_id)
             .map(|w| *w)
             .unwrap_or(0.0);
@@ -114,11 +116,7 @@ impl EvolutionEngine {
     pub fn best_strategy(&self, candidates: &[&str]) -> Option<String> {
         candidates
             .iter()
-            .filter_map(|&s| {
-                self.strategy_weights
-                    .get(s)
-                    .map(|w| (s.to_string(), *w))
-            })
+            .filter_map(|&s| self.strategy_weights.get(s).map(|w| (s.to_string(), *w)))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(s, _)| s)
     }
@@ -180,6 +178,8 @@ impl EvolutionEngine {
                 "positive": stats.positive,
                 "negative": stats.negative,
                 "avg_score": stats.avg_score,
+                "best_score": stats.best_score,
+                "worst_score": stats.worst_score,
             }
         });
 
@@ -216,7 +216,18 @@ impl EvolutionEngine {
             s.total = stats.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
             s.positive = stats.get("positive").and_then(|v| v.as_u64()).unwrap_or(0);
             s.negative = stats.get("negative").and_then(|v| v.as_u64()).unwrap_or(0);
-            s.avg_score = stats.get("avg_score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            s.avg_score = stats
+                .get("avg_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            s.best_score = stats
+                .get("best_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            s.worst_score = stats
+                .get("worst_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
         }
 
         tracing::info!(

@@ -36,7 +36,10 @@ impl VectorMemory {
     /// Falls back to in-memory storage if Qdrant is not reachable.
     pub async fn new(cfg: &VectorMemoryConfig) -> Result<Self> {
         let embedder = Arc::new(crate::embedding::VoyageEmbedder::new(cfg.embedding_dim));
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         // Try to connect to Qdrant — if it fails, we fall back to in-memory
         let qdrant_available = client
             .get(format!("{}/health", cfg.url))
@@ -62,11 +65,7 @@ impl VectorMemory {
             collection: cfg.collection.clone(),
             entries: parking_lot::RwLock::new(Vec::new()),
             qdrant_url: cfg.url.clone(),
-            qdrant_client: if qdrant_available {
-                Some(client)
-            } else {
-                None
-            },
+            qdrant_client: if qdrant_available { Some(client) } else { None },
         })
     }
 
@@ -128,11 +127,7 @@ impl VectorMemory {
             "with_payload": true
         });
 
-        let resp = client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await?;
+        let resp = client.post(&url).json(&body).send().await?;
 
         if !resp.status().is_success() {
             return Err(anyhow::anyhow!("Qdrant search returned {}", resp.status()));
@@ -175,10 +170,7 @@ impl VectorMemory {
         chunk: &MemoryChunk,
         vector: &[f32],
     ) -> Result<()> {
-        let url = format!(
-            "{}/collections/{}/points",
-            self.qdrant_url, self.collection
-        );
+        let url = format!("{}/collections/{}/points", self.qdrant_url, self.collection);
         let body = serde_json::json!({
             "points": [{
                 "id": chunk.id.to_string(),
@@ -190,16 +182,14 @@ impl VectorMemory {
             }]
         });
 
-        let resp = client
-            .put(&url)
-            .json(&body)
-            .send()
-            .await?;
+        let resp = client.put(&url).json(&body).send().await?;
 
         let status = resp.status();
         if !status.is_success() {
             let err_body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Qdrant upsert returned {status}: {err_body}"));
+            return Err(anyhow::anyhow!(
+                "Qdrant upsert returned {status}: {err_body}"
+            ));
         }
 
         Ok(())
@@ -285,7 +275,10 @@ mod tests {
     fn test_cosine_similarity_identical() {
         let v = vec![1.0_f32, 2.0, 3.0];
         let sim = cosine_similarity(&v, &v);
-        assert!((sim - 1.0).abs() < 0.001, "identical vectors should have similarity 1.0, got {sim}");
+        assert!(
+            (sim - 1.0).abs() < 0.001,
+            "identical vectors should have similarity 1.0, got {sim}"
+        );
     }
 
     #[test]
@@ -293,7 +286,10 @@ mod tests {
         let a = vec![1.0_f32, 0.0];
         let b = vec![0.0_f32, 1.0];
         let sim = cosine_similarity(&a, &b);
-        assert!((sim - 0.0).abs() < 0.001, "orthogonal vectors should have similarity 0.0, got {sim}");
+        assert!(
+            (sim - 0.0).abs() < 0.001,
+            "orthogonal vectors should have similarity 0.0, got {sim}"
+        );
     }
 
     #[test]

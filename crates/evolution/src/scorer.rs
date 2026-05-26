@@ -24,9 +24,13 @@ impl Scorer {
     /// Compute a score in [-1.0, 1.0] for an execution result.
     pub fn score(&self, result: &ExecutionResult) -> f64 {
         let success = if result.success { 1.0 } else { -1.0 };
-        let latency = 1.0
-            - (result.duration_ms as f64 / self.latency_target_ms as f64)
-                .min(1.0);
+        let target = if self.latency_target_ms == 0 {
+            tracing::warn!("latency_target_ms is 0, falling back to 2000ms");
+            2000u64
+        } else {
+            self.latency_target_ms
+        };
+        let latency = 1.0 - (result.duration_ms as f64 / target as f64).min(1.0);
         let quality = self.measure_quality(result);
 
         self.success_weight * success
@@ -57,6 +61,7 @@ mod tests {
             plan_id: Uuid::new_v4(),
             outputs: vec![StepOutput {
                 step_id: Uuid::new_v4(),
+                tool: "bash".into(),
                 success: true,
                 content: "ok".into(),
                 duration_ms: 1000,
@@ -88,6 +93,7 @@ mod tests {
             plan_id: Uuid::new_v4(),
             outputs: vec![StepOutput {
                 step_id: Uuid::new_v4(),
+                tool: "bash".into(),
                 success: true,
                 content: "slow".into(),
                 duration_ms: 5000,
@@ -97,6 +103,9 @@ mod tests {
         };
         let s = scorer.score(&result);
         // Should be lower than a fast success (which would score 1.0)
-        assert!(s < 1.0, "slow result should score lower than perfect, got {s}");
+        assert!(
+            s < 1.0,
+            "slow result should score lower than perfect, got {s}"
+        );
     }
 }

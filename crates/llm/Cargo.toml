@@ -12,4 +12,5 @@ tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 bytes.workspace = true
+parking_lot.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "macros"] }

@@ -5,6 +5,10 @@ use uuid::Uuid;
 pub mod agent;
 pub mod context;
 pub mod runner;
+pub mod session;
+
+pub use agent::HermesAgent;
+pub use session::SessionState;
 
 /// A chunk of memory with its embedding vector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +37,10 @@ pub struct Step {
     pub args: serde_json::Value,
     pub depends: Vec<Uuid>,
     pub strategy: String,
+    /// Fallback tool names to try if the primary tool fails after retries.
+    pub tool_candidates: Vec<String>,
+    /// Whether this step can be delegated to a sub-agent for parallel execution.
+    pub delegable: bool,
 }
 
 /// Directed acyclic graph representing step dependencies.
@@ -121,6 +129,7 @@ pub struct Plan {
 #[derive(Debug, Clone)]
 pub struct StepOutput {
     pub step_id: Uuid,
+    pub tool: String,
     pub success: bool,
     pub content: String,
     pub duration_ms: u64,
@@ -159,41 +168,89 @@ pub struct Insight {
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     // ── Lifecycle ──
-    AgentStarted { name: String },
+    AgentStarted {
+        name: String,
+    },
     AgentStopped,
-    TurnStarted { turn: u64 },
+    TurnStarted {
+        turn: u64,
+    },
 
     // ── Plan phase ──
     PlanPhaseStarted,
     /// A single token from LLM streaming output.
-    PlanStreamingToken { token: String },
+    PlanStreamingToken {
+        token: String,
+    },
     /// Plan parsing succeeded with this many steps.
-    PlanReady { steps_count: usize },
+    PlanReady {
+        steps_count: usize,
+    },
     /// First parse failed, retrying.
     PlanRetry,
 
     // ── Execute phase ──
-    ExecutePhaseStarted { total_steps: usize },
+    ExecutePhaseStarted {
+        total_steps: usize,
+    },
     /// A step is about to execute.
-    StepStarted { step_id: Uuid, tool: String, layer: usize },
+    StepStarted {
+        step_id: Uuid,
+        tool: String,
+        layer: usize,
+    },
     /// A step finished executing.
-    StepCompleted { output: StepOutput },
+    StepCompleted {
+        output: StepOutput,
+    },
     /// Entire plan execution completed.
-    ExecutePhaseComplete { all_success: bool, duration_ms: u64 },
+    ExecutePhaseComplete {
+        all_success: bool,
+        duration_ms: u64,
+    },
+
+    // ── Sub-agent delegation ──
+    SubAgentStarted {
+        task: String,
+    },
+    SubAgentCompleted {
+        task: String,
+        summary: String,
+    },
+
+    // ── Replan (when execution fails and needs retry with new plan) ──
+    ReplanNeeded {
+        reason: String,
+        attempt: usize,
+    },
+    ReplanComplete {
+        new_steps_count: usize,
+    },
 
     // ── Reflect phase ──
     ReflectPhaseStarted,
-    ReflectPhaseComplete { score: f64, lesson: String },
+    ReflectPhaseComplete {
+        score: f64,
+        lesson: String,
+    },
 
     // ── Evolve phase ──
     EvolvePhaseStarted,
     EvolvePhaseComplete,
 
     // ── Summary ──
-    SummaryReady { summary: String },
+    /// A single token from the summary streaming output.
+    SummaryStreamingToken {
+        token: String,
+    },
+    SummaryReady {
+        summary: String,
+    },
 
     // ── Errors ──
-    AgentError { message: String },
+    AgentError {
+        message: String,
+    },
 }
 
 /// Long-term memory storage abstraction.
@@ -205,4 +262,3 @@ pub trait MemoryStore: Send + Sync {
     /// Semantic search for the k most relevant chunks.
     async fn search(&self, query: &str, k: usize) -> anyhow::Result<Vec<MemoryChunk>>;
 }
-

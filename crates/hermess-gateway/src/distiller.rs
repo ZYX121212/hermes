@@ -1,5 +1,6 @@
 /// Compresses context to retain a configurable fraction of core information.
 pub struct ContextDistiller {
+    #[allow(dead_code)]
     keep_ratio: f64,
 }
 
@@ -9,6 +10,7 @@ impl ContextDistiller {
     }
 
     /// Returns a prompt for an LLM that compresses history, or None if no compression needed.
+    #[allow(dead_code)]
     pub fn distill_prompt(&self, history: &[(String, String)]) -> Option<String> {
         if history.is_empty() {
             return None;

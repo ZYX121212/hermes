@@ -30,12 +30,10 @@ impl AtomicF64 {
         success: Ordering,
         failure: Ordering,
     ) -> Result<f64, f64> {
-        match self.bits.compare_exchange(
-            current.to_bits(),
-            new.to_bits(),
-            success,
-            failure,
-        ) {
+        match self
+            .bits
+            .compare_exchange(current.to_bits(), new.to_bits(), success, failure)
+        {
             Ok(_) => Ok(new),
             Err(bits) => Err(f64::from_bits(bits)),
         }

@@ -45,19 +45,22 @@ mod tests {
 
     #[test]
     fn test_valid_dag() {
-        let specs = vec![
-            make_spec("bash", vec![]),
-            make_spec("web_search", vec![0]),
-        ];
+        let specs = vec![make_spec("bash", vec![]), make_spec("web_search", vec![0])];
         let ids: Vec<Uuid> = (0..2).map(|_| Uuid::new_v4()).collect();
         let dag = build_dag(&specs, &ids).unwrap();
-        let steps = specs.iter().enumerate().map(|(i, s)| agent_core::Step {
-            id: ids[i],
-            tool: s.tool.clone(),
-            args: s.args.clone(),
-            depends: s.depends.iter().map(|&d| ids[d]).collect(),
-            strategy: "fast".into(),
-        }).collect::<Vec<_>>();
+        let steps = specs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| agent_core::Step {
+                id: ids[i],
+                tool: s.tool.clone(),
+                args: s.args.clone(),
+                depends: s.depends.iter().map(|&d| ids[d]).collect(),
+                strategy: "fast".into(),
+                tool_candidates: vec![],
+                delegable: false,
+            })
+            .collect::<Vec<_>>();
         let layers = dag.topological_layers(&steps);
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0].len(), 1);
@@ -87,13 +90,19 @@ mod tests {
         ];
         let ids: Vec<Uuid> = (0..3).map(|_| Uuid::new_v4()).collect();
         let dag = build_dag(&specs, &ids).unwrap();
-        let steps = specs.iter().enumerate().map(|(i, s)| agent_core::Step {
-            id: ids[i],
-            tool: s.tool.clone(),
-            args: s.args.clone(),
-            depends: vec![],
-            strategy: "fast".into(),
-        }).collect::<Vec<_>>();
+        let steps = specs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| agent_core::Step {
+                id: ids[i],
+                tool: s.tool.clone(),
+                args: s.args.clone(),
+                depends: vec![],
+                strategy: "fast".into(),
+                tool_candidates: vec![],
+                delegable: false,
+            })
+            .collect::<Vec<_>>();
         let layers = dag.topological_layers(&steps);
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].len(), 3);

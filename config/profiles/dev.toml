@@ -1,0 +1,23 @@
+# Hermes — 开发环境配置
+# 使用: hermes --profile dev
+
+learning_rate = 0.3          # 更高的探索率
+working_memory_size = 50
+max_concurrency = 5
+
+[llm]
+provider = "deepseek"
+model = "deepseek-chat"
+max_tokens = 2048
+
+[guard]
+danger_mode = "ask"
+
+[search]
+endpoint = "https://api.search.brave.com/res/v1/web/search"
+
+[scorer]
+success_weight = 0.6
+latency_weight = 0.2
+quality_weight = 0.2
+latency_target_ms = 2000

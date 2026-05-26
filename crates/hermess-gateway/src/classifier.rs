@@ -110,6 +110,7 @@ impl ComplexityClassifier {
         }
     }
 
+    #[allow(dead_code)]
     pub fn timeout_ms(&self) -> u64 {
         self.config.timeout_ms
     }

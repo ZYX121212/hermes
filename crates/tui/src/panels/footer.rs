@@ -25,8 +25,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState) {
             (FocusedPanel::MainLeft, AgentPhase::Executing, LeftTab::Execution, _) => {
                 "[Tab] Plan  [↑↓] 选择  [Enter] 详情  [q] 退出  [h] 帮助".to_string()
             }
-            (FocusedPanel::MainLeft, p, _, _)
-                if matches!(p, AgentPhase::Planning | AgentPhase::Executing) =>
+            (FocusedPanel::MainLeft, AgentPhase::Planning | AgentPhase::Executing, _, _) =>
             {
                 "[Tab] 切换  [↑↓] 滚动  [q] 退出  [h] 帮助".to_string()
             }

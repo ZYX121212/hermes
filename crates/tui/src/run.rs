@@ -25,7 +25,7 @@ pub async fn run_tui<A>(
     evolution: Arc<EvolutionEngine>,
     agent_name: String,
     tui_input: Arc<TuiInput>,
-) -> anyhow::Result<()>
+) -> anyhow::Result<A>
 where
     A: agent_core::agent::HermesAgent + Send + 'static,
 {
@@ -68,11 +68,17 @@ where
                 while let Ok(event) = rx_lock.try_recv() {
                     handle_event(&mut state, event);
                 }
-                state.awaiting_input =
-                    tui_input.awaiting.load(std::sync::atomic::Ordering::Relaxed);
-                if state.awaiting_input {
-                    state.input_text = tui_input.buffer.lock().clone();
-                }
+                // Lock buffer first to close TOCTOU window with agent thread
+                let buffer = tui_input.buffer.lock();
+                state.awaiting_input = tui_input
+                    .awaiting
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                state.input_text = if state.awaiting_input {
+                    buffer.clone()
+                } else {
+                    String::new()
+                };
+                drop(buffer);
                 state.frame_count += 1;
             }
 
@@ -145,9 +151,7 @@ where
                         // ── Help overlay absorbs keys ──
                         if state.help_visible {
                             match key.code {
-                                KeyCode::Char('h')
-                                | KeyCode::Esc
-                                | KeyCode::F(1) => {
+                                KeyCode::Char('h') | KeyCode::Esc | KeyCode::F(1) => {
                                     state.help_visible = false;
                                 }
                                 _ => {} // ignore other keys while help visible
@@ -183,8 +187,11 @@ where
                                             .input_history_pos
                                             .map(|p| if p > 0 { p - 1 } else { 0 })
                                             .unwrap_or(hist_len - 1);
-                                        let entry =
-                                            state.input_history.get(pos).cloned().unwrap_or_default();
+                                        let entry = state
+                                            .input_history
+                                            .get(pos)
+                                            .cloned()
+                                            .unwrap_or_default();
                                         *tui_input.buffer.lock() = entry;
                                         state.input_history_pos = Some(pos);
                                     }
@@ -227,14 +234,21 @@ where
                                 KeyCode::Char('h') | KeyCode::F(1) => {
                                     state.help_visible = !state.help_visible;
                                 }
+                                KeyCode::BackTab => {
+                                    state.focused_panel = state.focused_panel.prev();
+                                }
                                 KeyCode::Tab => {
-                                    if matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
-                                        && state.focused_panel == FocusedPanel::MainLeft
+                                    if matches!(
+                                        state.phase,
+                                        AgentPhase::Planning | AgentPhase::Executing
+                                    ) && state.focused_panel == FocusedPanel::MainLeft
+                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
                                     {
                                         state.left_tab = state.left_tab.next();
                                     } else if state.phase == AgentPhase::Idle
                                         && state.agent_done
                                         && state.focused_panel == FocusedPanel::MainLeft
+                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
                                     {
                                         state.results_visible = !state.results_visible;
                                     } else if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -270,10 +284,12 @@ where
                                         let len = state.executions.len();
                                         if len > 0 {
                                             let idx = state.exec_selected_index.unwrap_or(0);
-                                            let new_idx = if idx + 1 < len { idx + 1 } else { len - 1 };
+                                            let new_idx =
+                                                if idx + 1 < len { idx + 1 } else { len - 1 };
                                             state.exec_selected_index = Some(new_idx);
                                             if (new_idx as u16) >= state.exec_scroll + 8 {
-                                                state.exec_scroll = (new_idx as u16).saturating_sub(7);
+                                                state.exec_scroll =
+                                                    (new_idx as u16).saturating_sub(7);
                                             }
                                         }
                                     } else {
@@ -300,16 +316,22 @@ where
                                     {
                                         if let Some(idx) = state.exec_selected_index {
                                             if let Some(step) = state.executions.get(idx) {
-                                                state.output_overlay = Some(crate::state::StepOutputOverlay {
-                                                    step_id: step.step_id,
-                                                    tool: step.tool.clone(),
-                                                    status: step.status.clone(),
-                                                    duration_ms: step.duration_ms,
-                                                    full_content: step.content_full.clone().unwrap_or_else(|| {
-                                                        step.content_preview.clone().unwrap_or_default()
-                                                    }),
-                                                    scroll: 0,
-                                                });
+                                                state.output_overlay =
+                                                    Some(crate::state::StepOutputOverlay {
+                                                        step_id: step.step_id,
+                                                        tool: step.tool.clone(),
+                                                        status: step.status.clone(),
+                                                        duration_ms: step.duration_ms,
+                                                        full_content: step
+                                                            .content_full
+                                                            .clone()
+                                                            .unwrap_or_else(|| {
+                                                                step.content_preview
+                                                                    .clone()
+                                                                    .unwrap_or_default()
+                                                            }),
+                                                        scroll: 0,
+                                                    });
                                             }
                                         }
                                     } else if state.focused_panel == FocusedPanel::Evolution {
@@ -320,17 +342,15 @@ where
                             }
                         }
                     }
-                    Ok(Event::Mouse(mouse)) => {
-                        match mouse.kind {
-                            MouseEventKind::ScrollDown => {
-                                scroll_mouse(&app_state, 1, mouse.column, mouse.row);
-                            }
-                            MouseEventKind::ScrollUp => {
-                                scroll_mouse(&app_state, -1, mouse.column, mouse.row);
-                            }
-                            _ => {}
+                    Ok(Event::Mouse(mouse)) => match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            scroll_mouse(&app_state, 1, mouse.column, mouse.row);
                         }
-                    }
+                        MouseEventKind::ScrollUp => {
+                            scroll_mouse(&app_state, -1, mouse.column, mouse.row);
+                        }
+                        _ => {}
+                    },
                     Ok(Event::Resize(..)) => {
                         // Redraw on next frame with new dimensions
                     }
@@ -355,8 +375,15 @@ where
         state.agent_done = true;
         state.results_visible = true;
         state.phase = AgentPhase::Idle;
-        // Don't overwrite real summary with boilerplate
-        if state.summary.is_none() {
+        if let Err(ref e) = result {
+            let message = format!("执行失败: {e}");
+            state.log_entries.push_back(LogEntry {
+                message: message.clone(),
+                is_error: true,
+            });
+            state.summary = Some(message);
+        } else if state.summary.is_none() {
+            // Don't overwrite real summary with boilerplate
             state.summary = Some("完成 — 按 q 或 Esc 退出".into());
         }
     }
@@ -367,7 +394,7 @@ where
         Err(join_err) => tracing::error!(error = %join_err, "TUI render task panicked"),
     }
 
-    result
+    result.map(|()| agent)
 }
 
 // ── Scroll helpers ──
@@ -451,26 +478,20 @@ fn toggle_evolution_section(state: &mut TuiAppState) {
 
 /// Simple mouse scroll: determine which panel the cursor is over and scroll it.
 /// Uses a single write lock to avoid TOCTOU between layout computation and scroll update.
-fn scroll_mouse(
-    app_state: &Arc<parking_lot::RwLock<TuiAppState>>,
-    delta: i16,
-    col: u16,
-    row: u16,
-) {
+fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, col: u16, row: u16) {
     let mut state = app_state.write();
     let term_size = crossterm::terminal::size().unwrap_or((80, 24));
 
-    let needs_mini_log =
-        matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
+    let needs_mini_log = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
 
     let header_h = 1;
     let footer_h = 1;
     let mini_log_h = if needs_mini_log { 3 } else { 0 };
     let main_h = term_size.1.saturating_sub(header_h + footer_h + mini_log_h);
 
-    let (left_pct, _right_pct) = state.phase.main_split_ratio(
-        !state.evolution.all_weights().is_empty(),
-    );
+    let (left_pct, _right_pct) = state
+        .phase
+        .main_split_ratio(!state.evolution.all_weights().is_empty());
 
     let left_w = (term_size.0 as f64 * left_pct as f64 / 100.0) as u16;
 
@@ -490,16 +511,14 @@ fn scroll_mouse(
     if in_main && in_left {
         // Main left panel
         match state.phase {
-            AgentPhase::Planning | AgentPhase::Executing => {
-                match state.left_tab {
-                    crate::state::LeftTab::Plan => {
-                        state.plan_scroll = apply_delta(state.plan_scroll, delta);
-                    }
-                    crate::state::LeftTab::Execution => {
-                        state.exec_scroll = apply_delta(state.exec_scroll, delta);
-                    }
+            AgentPhase::Planning | AgentPhase::Executing => match state.left_tab {
+                crate::state::LeftTab::Plan => {
+                    state.plan_scroll = apply_delta(state.plan_scroll, delta);
                 }
-            }
+                crate::state::LeftTab::Execution => {
+                    state.exec_scroll = apply_delta(state.exec_scroll, delta);
+                }
+            },
             _ => {
                 state.log_scroll = apply_delta(state.log_scroll, delta);
             }
@@ -527,6 +546,7 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.turn = turn;
             state.phase = AgentPhase::Observing;
             state.streaming_buffer.clear();
+            state.summary_streaming_buffer.clear();
             state.plan_steps_count = 0;
             state.plan_ready = false;
             state.executions.clear();
@@ -578,6 +598,9 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                 duration_ms: None,
                 layer,
             });
+            if state.exec_selected_index.is_none() {
+                state.exec_selected_index = Some(state.executions.len().saturating_sub(1));
+            }
         }
         AgentEvent::StepCompleted { output } => {
             if let Some(step) = state
@@ -595,7 +618,12 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                 step.content_full = Some({
                     let limit = 10_000; // 10KB upper bound
                     if clean.len() > limit {
-                        let mut s = clean[..limit].to_string();
+                        // Find safe char boundary to avoid panicking on multi-byte UTF-8
+                        let mut end = limit;
+                        while end > 0 && !clean.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        let mut s = clean[..end].to_string();
                         s.push_str("…[truncated]");
                         s
                     } else {
@@ -612,15 +640,17 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
                 .count();
             // Add step result to log for persistent visibility
             let status_icon = if output.success { "✓" } else { "✗" };
-            let preview = crate::state::truncate(
-                &crate::state::strip_ansi(&output.content),
-                80,
-            );
+            let preview = crate::state::truncate(&crate::state::strip_ansi(&output.content), 80);
             state.log_entries.push_back(LogEntry {
                 message: format!(
                     "{} {} ({:.1}s): {}",
                     status_icon,
-                    output.step_id.to_string().chars().take(8).collect::<String>(),
+                    output
+                        .step_id
+                        .to_string()
+                        .chars()
+                        .take(8)
+                        .collect::<String>(),
                     output.duration_ms as f64 / 1000.0,
                     preview,
                 ),
@@ -632,6 +662,36 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.total_duration_ms = Some(duration_ms);
             state.log_entries.push_back(LogEntry {
                 message: format!("执行完成 ({:.1}s)", duration_ms as f64 / 1000.0),
+                is_error: false,
+            });
+        }
+        AgentEvent::SubAgentStarted { task } => {
+            state.log_entries.push_back(LogEntry {
+                message: format!("子任务开始: {}", task),
+                is_error: false,
+            });
+        }
+        AgentEvent::SubAgentCompleted { task, summary } => {
+            state.log_entries.push_back(LogEntry {
+                message: format!("子任务完成: {} → {}", task, summary),
+                is_error: false,
+            });
+        }
+        AgentEvent::ReplanNeeded { reason, attempt } => {
+            state.phase = AgentPhase::Planning;
+            state.streaming_buffer.clear();
+            state.plan_ready = false;
+            state.left_tab = LeftTab::Plan;
+            state.log_entries.push_back(LogEntry {
+                message: format!("重规划 #{attempt}: {reason}"),
+                is_error: false,
+            });
+        }
+        AgentEvent::ReplanComplete { new_steps_count } => {
+            state.plan_steps_count = new_steps_count;
+            state.plan_ready = true;
+            state.log_entries.push_back(LogEntry {
+                message: format!("重规划完成: {new_steps_count} 个步骤"),
                 is_error: false,
             });
         }
@@ -651,7 +711,11 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
         AgentEvent::EvolvePhaseComplete => {
             state.phase = AgentPhase::Idle;
         }
+        AgentEvent::SummaryStreamingToken { token } => {
+            state.summary_streaming_buffer.push_str(&token);
+        }
         AgentEvent::SummaryReady { summary } => {
+            state.summary_streaming_buffer.clear();
             state.log_entries.push_back(LogEntry {
                 message: format!("结果: {}", summary),
                 is_error: false,
@@ -669,5 +733,273 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
     // Prune log buffer
     while state.log_entries.len() > 200 {
         state.log_entries.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TuiAppState;
+    use agent_core::AgentEvent;
+    use std::sync::Arc;
+
+    fn make_state() -> TuiAppState {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        TuiAppState::new("test".into(), evo)
+    }
+
+    // ── apply_delta ──
+
+    #[test]
+    fn test_apply_delta_positive() {
+        assert_eq!(apply_delta(5, 3), 8);
+    }
+
+    #[test]
+    fn test_apply_delta_negative() {
+        assert_eq!(apply_delta(5, -3), 2);
+    }
+
+    #[test]
+    fn test_apply_delta_saturating_zero() {
+        assert_eq!(apply_delta(2, -5), 0);
+    }
+
+    #[test]
+    fn test_apply_delta_saturating_max() {
+        assert_eq!(apply_delta(u16::MAX, 5), u16::MAX);
+    }
+
+    #[test]
+    fn test_apply_delta_zero() {
+        assert_eq!(apply_delta(10, 0), 10);
+    }
+
+    // ── handle_event: TurnStarted resets state ──
+
+    #[test]
+    fn test_turn_started_resets_execution() {
+        let mut state = make_state();
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: Some("output".into()),
+            content_full: Some("full output".into()),
+            duration_ms: Some(100),
+            layer: 0,
+        });
+        state.exec_total_steps = 1;
+        state.exec_completed_steps = 1;
+        state.streaming_buffer = "plan content".into();
+        state.plan_ready = true;
+        state.plan_steps_count = 3;
+
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 2 });
+
+        assert_eq!(state.turn, 2);
+        assert_eq!(state.phase, AgentPhase::Observing);
+        assert!(state.executions.is_empty());
+        assert_eq!(state.exec_total_steps, 0);
+        assert_eq!(state.exec_completed_steps, 0);
+        assert!(state.streaming_buffer.is_empty());
+        assert!(!state.plan_ready);
+        assert_eq!(state.plan_steps_count, 0);
+        assert_eq!(state.left_tab, LeftTab::Execution);
+        assert!(state.exec_selected_index.is_none());
+        assert!(state.results_visible);
+    }
+
+    // ── handle_event: PlanPhaseStarted switches tab ──
+
+    #[test]
+    fn test_plan_phase_started_switches_tab() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Planning);
+        assert_eq!(state.left_tab, LeftTab::Plan);
+    }
+
+    // ── handle_event: ExecutePhaseStarted switches tab back ──
+
+    #[test]
+    fn test_execute_phase_started_switches_tab() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 5 },
+        );
+        assert_eq!(state.phase, AgentPhase::Executing);
+        assert_eq!(state.left_tab, LeftTab::Execution);
+        assert_eq!(state.exec_total_steps, 5);
+        assert!(state.executions.is_empty());
+        assert!(state.exec_selected_index.is_none());
+    }
+
+    // ── handle_event: StepStarted + StepCompleted ──
+
+    #[test]
+    fn test_step_lifecycle() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 1 },
+        );
+
+        let step_id = uuid::Uuid::new_v4();
+        handle_event(
+            &mut state,
+            AgentEvent::StepStarted {
+                step_id,
+                tool: "bash".into(),
+                layer: 0,
+            },
+        );
+
+        assert_eq!(state.executions.len(), 1);
+        assert_eq!(
+            state.executions[0].status,
+            crate::state::StepStatus::Running
+        );
+        assert_eq!(state.exec_selected_index, Some(0));
+
+        handle_event(
+            &mut state,
+            AgentEvent::StepCompleted {
+                output: agent_core::StepOutput {
+                    step_id,
+                    tool: "bash".into(),
+                    success: true,
+                    content: "done".into(),
+                    duration_ms: 42,
+                },
+            },
+        );
+
+        assert_eq!(
+            state.executions[0].status,
+            crate::state::StepStatus::Success
+        );
+        assert_eq!(state.executions[0].duration_ms, Some(42));
+        assert!(state.executions[0].content_full.is_some());
+        assert!(state.executions[0].content_preview.is_some());
+        assert_eq!(state.exec_completed_steps, 1);
+        // Should also add a log entry
+        assert!(!state.log_entries.is_empty());
+    }
+
+    // ── handle_event: ExecutePhaseComplete sets total_duration ──
+
+    #[test]
+    fn test_execute_phase_complete_sets_duration() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 1 },
+        );
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseComplete {
+                all_success: true,
+                duration_ms: 500,
+            },
+        );
+        assert_eq!(state.phase, AgentPhase::Reflecting);
+        assert_eq!(state.total_duration_ms, Some(500));
+    }
+
+    // ── handle_event: log buffer pruning ──
+
+    #[test]
+    fn test_log_buffer_pruning() {
+        let mut state = make_state();
+        // Fill log beyond 200 entries
+        for i in 0..250 {
+            handle_event(
+                &mut state,
+                AgentEvent::AgentError {
+                    message: format!("error {i}"),
+                },
+            );
+        }
+        assert!(state.log_entries.len() <= 200);
+        // Oldest entries should be gone
+        assert!(!state
+            .log_entries
+            .front()
+            .unwrap()
+            .message
+            .contains("error 0"));
+    }
+
+    // ── scroll helpers ──
+
+    #[test]
+    fn test_scroll_focused_main_left_planning_plan_tab() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Planning;
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.left_tab = LeftTab::Plan;
+        state.plan_scroll = 10;
+        scroll_focused(&mut state, 5);
+        assert_eq!(state.plan_scroll, 15);
+        scroll_focused(&mut state, -3);
+        assert_eq!(state.plan_scroll, 12);
+    }
+
+    #[test]
+    fn test_scroll_focused_main_left_executing_exec_tab() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.left_tab = LeftTab::Execution;
+        state.exec_scroll = 5;
+        scroll_focused(&mut state, 3);
+        assert_eq!(state.exec_scroll, 8);
+    }
+
+    #[test]
+    fn test_scroll_focused_evolution() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 3;
+        scroll_focused(&mut state, 2);
+        assert_eq!(state.evo_scroll, 5);
+    }
+
+    // ── AgentError adds to log ──
+
+    #[test]
+    fn test_agent_error_adds_log_entry() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::AgentError {
+                message: "test error".into(),
+            },
+        );
+        assert_eq!(state.log_entries.len(), 1);
+        assert!(state.log_entries[0].is_error);
+        assert_eq!(state.log_entries[0].message, "test error");
+    }
+
+    // ── SummaryReady ──
+
+    #[test]
+    fn test_summary_ready_sets_summary() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryReady {
+                summary: "all done".into(),
+            },
+        );
+        assert_eq!(state.summary.as_deref(), Some("all done"));
     }
 }

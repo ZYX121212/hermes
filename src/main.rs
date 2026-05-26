@@ -1,5 +1,6 @@
 // src/main.rs
 // Hermes Agent CLI — assembles all subsystems per the arch spec.
+use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_core::{AgentEvent, HermesAgent};
@@ -413,7 +414,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let danger_guard = Arc::new(tools::DangerGuard::new(
-        tools::ConfirmationPolicy::from_str(&cfg.guard.danger_mode),
+        tools::ConfirmationPolicy::from_str(&cfg.guard.danger_mode).unwrap(),
         cfg.guard.dangerous_patterns.clone(),
     ));
 

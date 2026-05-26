@@ -41,6 +41,7 @@ mod tests {
             plan_id: Uuid::new_v4(),
             outputs: vec![StepOutput {
                 step_id: Uuid::new_v4(),
+                tool: "bash".into(),
                 success: true,
                 content: "ok".into(),
                 duration_ms: 100,
@@ -59,12 +60,14 @@ mod tests {
             outputs: vec![
                 StepOutput {
                     step_id: Uuid::new_v4(),
+                    tool: "bash".into(),
                     success: true,
                     content: "ok".into(),
                     duration_ms: 100,
                 },
                 StepOutput {
                     step_id: Uuid::new_v4(),
+                    tool: "bash".into(),
                     success: false,
                     content: "command not found".into(),
                     duration_ms: 500,

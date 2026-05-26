@@ -7,7 +7,7 @@ max_concurrency = 10
 provider = "deepseek"
 model = "deepseek-chat"
 max_tokens = 4096
-# api_key = "sk-..."
+api_key = "sk-4c8edc0f06a04b909e1cf3b8ad091b9b"
 
 [qdrant]
 url = "http://localhost:6334"

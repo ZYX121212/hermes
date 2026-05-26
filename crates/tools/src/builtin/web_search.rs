@@ -97,7 +97,9 @@ impl Tool for WebSearchTool {
                     Ok(t) => t,
                     Err(e) => {
                         tracing::warn!(error = %e, "WebSearch response body read failed");
-                        return Ok(ToolOutput::error(format!("Search response read failed: {e}")));
+                        return Ok(ToolOutput::error(format!(
+                            "Search response read failed: {e}"
+                        )));
                     }
                 };
                 Ok(ToolOutput {

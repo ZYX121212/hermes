@@ -1,9 +1,14 @@
 // crates/tools/src/lib.rs
 pub mod builtin;
 pub mod caller;
+pub mod plugin;
 pub mod registry;
 
-pub use builtin::{BashTool, ReadFileTool, SearchConfig, WebSearchTool, WriteFileTool};
+pub use builtin::{
+    BashTool, ConfirmationPolicy, DangerGuard, ReadFileTool, ReplyTool, SearchConfig,
+    WebSearchTool, WriteFileTool,
+};
+pub use plugin::{discover_plugins, PluginManifest, ScriptPlugin, ShellPlugin};
 pub use registry::ToolRegistry;
 
 use async_trait::async_trait;

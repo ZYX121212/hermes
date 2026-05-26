@@ -14,6 +14,7 @@ impl ResultMerger {
     }
 
     /// Merge with an explicit separator.
+    #[allow(dead_code)]
     pub fn merge_with_separator(critical: &str, regular: &str, sep: &str) -> String {
         if regular.is_empty() {
             return critical.to_string();

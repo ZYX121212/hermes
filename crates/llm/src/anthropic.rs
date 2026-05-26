@@ -1,11 +1,15 @@
 // crates/llm/src/anthropic.rs
 // Adapter for the Anthropic (Claude) Messages API.
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::Stream;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::adapter::LlmAdapter;
+use crate::usage::TokenUsage;
 
 /// Configuration for an Anthropic API connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +25,7 @@ pub struct AnthropicAdapter {
     api_key: String,
     model: String,
     max_tokens: u32,
+    last_usage: Arc<Mutex<Option<TokenUsage>>>,
 }
 
 impl AnthropicAdapter {
@@ -31,6 +36,7 @@ impl AnthropicAdapter {
             api_key: cfg.api_key.clone(),
             model: cfg.model.clone(),
             max_tokens: cfg.max_tokens,
+            last_usage: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -41,6 +47,13 @@ impl AnthropicAdapter {
             "max_tokens": self.max_tokens,
             "messages": [{"role": "user", "content": prompt}]
         })
+    }
+
+    fn extract_usage(body: &Value) -> Option<TokenUsage> {
+        let usage = body.get("usage")?;
+        let input = usage.get("input_tokens")?.as_u64()?;
+        let output = usage.get("output_tokens")?.as_u64()?;
+        Some(TokenUsage::new(input, output, input + output))
     }
 }
 
@@ -68,13 +81,21 @@ impl LlmAdapter for AnthropicAdapter {
         let body: Value = resp.json().await?;
 
         if !status.is_success() {
-            let err_msg = body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let err_msg = body["error"]["message"].as_str().unwrap_or("unknown error");
             return Err(anyhow::anyhow!(
                 "Anthropic API error ({}): {err_msg}",
                 status
             ));
+        }
+
+        // Extract usage
+        if let Some(usage) = Self::extract_usage(&body) {
+            tracing::debug!(
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                "Anthropic token usage"
+            );
+            *self.last_usage.lock() = Some(usage);
         }
 
         let text = body["content"][0]["text"]
@@ -122,8 +143,6 @@ impl LlmAdapter for AnthropicAdapter {
     }
 
     async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
-        // Anthropic does not currently provide a dedicated embedding API.
-        // In production, use Voyage AI (voyage-3) for embeddings.
         use std::sync::atomic::{AtomicBool, Ordering};
         static EMBED_WARNED: AtomicBool = AtomicBool::new(false);
         if !EMBED_WARNED.swap(true, Ordering::Relaxed) {
@@ -132,5 +151,9 @@ impl LlmAdapter for AnthropicAdapter {
             );
         }
         Ok(vec![0.0_f32; 1024])
+    }
+
+    fn last_usage(&self) -> Option<TokenUsage> {
+        self.last_usage.lock().clone()
     }
 }

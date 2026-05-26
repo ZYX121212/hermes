@@ -27,8 +27,8 @@ impl InsightStats {
         } else {
             self.negative += 1;
         }
-        self.avg_score = (self.avg_score * (self.total - 1) as f64 + insight.score)
-            / self.total as f64;
+        self.avg_score =
+            (self.avg_score * (self.total - 1) as f64 + insight.score) / self.total as f64;
         if insight.score > self.best_score {
             self.best_score = insight.score;
         }

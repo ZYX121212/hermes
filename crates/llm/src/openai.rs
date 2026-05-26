@@ -1,11 +1,15 @@
 // crates/llm/src/openai.rs
 // Adapter for the OpenAI API (GPT-4, GPT-4o, etc.).
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::Stream;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::adapter::LlmAdapter;
+use crate::usage::TokenUsage;
 
 /// Configuration for an OpenAI-compatible API connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +32,7 @@ pub struct OpenAIAdapter {
     model: String,
     max_tokens: u32,
     base_url: String,
+    last_usage: Arc<Mutex<Option<TokenUsage>>>,
 }
 
 impl OpenAIAdapter {
@@ -39,6 +44,7 @@ impl OpenAIAdapter {
             model: cfg.model.clone(),
             max_tokens: cfg.max_tokens,
             base_url: cfg.base_url.clone(),
+            last_usage: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -48,6 +54,15 @@ impl OpenAIAdapter {
             "max_tokens": self.max_tokens,
             "messages": [{"role": "user", "content": prompt}]
         })
+    }
+
+    fn extract_usage(body: &Value) -> Option<TokenUsage> {
+        let usage = body.get("usage")?;
+        Some(TokenUsage::new(
+            usage.get("prompt_tokens")?.as_u64()?,
+            usage.get("completion_tokens")?.as_u64()?,
+            usage.get("total_tokens")?.as_u64()?,
+        ))
     }
 }
 
@@ -81,10 +96,18 @@ impl LlmAdapter for OpenAIAdapter {
         })?;
 
         if !status.is_success() {
-            let err_msg = body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let err_msg = body["error"]["message"].as_str().unwrap_or("unknown error");
             return Err(anyhow::anyhow!("API 错误 ({}): {err_msg}", status));
+        }
+
+        // Extract usage
+        if let Some(usage) = Self::extract_usage(&body) {
+            tracing::debug!(
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                "OpenAI token usage"
+            );
+            *self.last_usage.lock() = Some(usage);
         }
 
         let text = body["choices"][0]["message"]["content"]
@@ -120,10 +143,7 @@ impl LlmAdapter for OpenAIAdapter {
         if !resp.status().is_success() {
             let status = resp.status();
             let err_body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "Stream error ({}): {err_body}",
-                status
-            ));
+            return Err(anyhow::anyhow!("Stream error ({}): {err_body}", status));
         }
 
         use crate::stream::SseChunkStream;
@@ -163,10 +183,12 @@ impl LlmAdapter for OpenAIAdapter {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|v| v.as_f64().map(|x| x as f32).unwrap_or_else(|| {
-                        tracing::warn!(value = %v, "Non-numeric embedding value");
-                        0.0
-                    }))
+                    .map(|v| {
+                        v.as_f64().map(|x| x as f32).unwrap_or_else(|| {
+                            tracing::warn!(value = %v, "Non-numeric embedding value");
+                            0.0
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_else(|| {
@@ -175,5 +197,9 @@ impl LlmAdapter for OpenAIAdapter {
             });
 
         Ok(embedding)
+    }
+
+    fn last_usage(&self) -> Option<TokenUsage> {
+        self.last_usage.lock().clone()
     }
 }

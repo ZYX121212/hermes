@@ -112,6 +112,9 @@ impl Context {
     /// Check if the agent should stop. Returns true if:
     /// - Ctrl+C was received, or
     /// - The max iteration count has been reached (non-interactive only).
+    ///
+    /// This is a pure predicate — it does NOT modify state. Callers
+    /// must invoke `advance_iteration` once per completed iteration.
     pub fn should_stop(&self) -> bool {
         if self.stop_flag.load(Ordering::Relaxed) {
             return true;
@@ -120,10 +123,15 @@ impl Context {
             return false; // Only Ctrl-C stops interactive mode
         }
         if self.max_iterations > 0 {
-            let count = self.iteration.fetch_add(1, Ordering::Relaxed) + 1;
-            count > self.max_iterations
+            self.iteration.load(Ordering::Relaxed) > self.max_iterations
         } else {
             false
         }
+    }
+
+    /// Increment the iteration counter. Call once per completed iteration
+    /// (after evolve + summarize). Returns the new count.
+    pub fn advance_iteration(&self) -> u64 {
+        self.iteration.fetch_add(1, Ordering::Relaxed) + 1
     }
 }

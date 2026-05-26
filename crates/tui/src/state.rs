@@ -141,6 +141,9 @@ pub struct TuiAppState {
     pub plan_steps_count: usize,
     pub plan_ready: bool,
 
+    // Summary streaming
+    pub summary_streaming_buffer: String,
+
     // Execution panel
     pub executions: Vec<StepExecState>,
     pub exec_total_steps: usize,
@@ -198,6 +201,7 @@ impl TuiAppState {
             streaming_buffer: String::new(),
             plan_steps_count: 0,
             plan_ready: false,
+            summary_streaming_buffer: String::new(),
             executions: Vec::new(),
             exec_total_steps: 0,
             exec_completed_steps: 0,

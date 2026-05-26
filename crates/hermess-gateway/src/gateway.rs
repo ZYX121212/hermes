@@ -16,7 +16,9 @@ pub struct Gateway {
     registry: Arc<ModelRegistry>,
     decision_engine: DecisionEngine,
     decomposer: Option<PromptDecomposer>,
+    #[allow(dead_code)]
     distiller: Option<ContextDistiller>,
+    #[allow(dead_code)]
     pub session_history: Mutex<Vec<(String, String)>>,
 }
 
@@ -139,6 +141,7 @@ impl Gateway {
         self.registry.all()
     }
 
+    #[allow(dead_code)]
     pub fn registry(&self) -> &ModelRegistry {
         &self.registry
     }

@@ -6,6 +6,7 @@ pub struct ModelRegistry {
     models: Vec<ModelEntry>,
 }
 
+#[allow(dead_code)]
 impl ModelRegistry {
     pub fn new() -> Self {
         Self { models: Vec::new() }

@@ -5,6 +5,7 @@ pub mod panels;
 pub mod render;
 pub mod run;
 pub mod state;
+pub mod theme;
 
 pub use run::run_tui;
 pub use state::TuiInput;

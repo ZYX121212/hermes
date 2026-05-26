@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::{ToolOutput, registry::ToolRegistry};
+use crate::{registry::ToolRegistry, ToolOutput};
 
 /// Unified tool-calling interface with timing instrumentation.
 pub struct ToolCaller {

@@ -1,7 +1,7 @@
 // crates/tools/src/builtin/file.rs
 // File system tools: read_file and write_file.
-use async_trait::async_trait;
 use crate::{Tool, ToolOutput};
+use async_trait::async_trait;
 
 /// Reads the contents of a file at the given path.
 pub struct ReadFileTool;
@@ -40,7 +40,11 @@ impl Tool for ReadFileTool {
         match tokio::fs::read_to_string(path).await {
             Ok(content) => {
                 let truncated = if content.len() > 10000 {
-                    format!("{}...\n[truncated, {} bytes total]", &content[..10000], content.len())
+                    format!(
+                        "{}...\n[truncated, {} bytes total]",
+                        &content[..10000],
+                        content.len()
+                    )
                 } else {
                     content
                 };

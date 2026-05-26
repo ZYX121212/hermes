@@ -12,6 +12,7 @@ pub struct GatewaySection {
     #[serde(default = "default_listen")]
     pub listen: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub api_key: String,
     #[serde(default = "default_mode")]
     pub default_mode: RouteMode,
@@ -128,7 +129,7 @@ impl GatewayConfig {
                 let mut var = String::new();
                 let mut default = String::new();
                 let mut in_default = false;
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == ':' && !in_default {
                         in_default = true;
                     } else if c == '}' {
