@@ -7,10 +7,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, Paragraph};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, TuiAppState};
+use crate::state::{clamp_scroll, render_scrollbar, TuiAppState};
 use crate::theme;
 
 pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
+    if area.width < 3 || area.height < 4 {
+        return;
+    }
     let completed = state.exec_completed_steps;
     let total = state.exec_total_steps;
 
@@ -112,7 +115,7 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
     // Render step list
     let para = Paragraph::new(lines)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
-        .scroll((state.exec_scroll, 0));
+        .scroll((clamp_scroll(state.exec_scroll, content_height, viewport_h), 0));
     frame.render_widget(para, list_area);
 
     // Progress bar
@@ -133,7 +136,7 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
 
     // Scrollbar (single widget)
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(state.exec_scroll, content_height, viewport_h);
+        let bar = render_scrollbar(clamp_scroll(state.exec_scroll, content_height, viewport_h), content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

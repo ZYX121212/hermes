@@ -154,12 +154,16 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     }
 
     // ── Render evolution panel (always on the right) ──
-    panels::evolution::render_evolution(
-        frame,
-        right_area,
-        state,
-        state.focused_panel == FocusedPanel::Evolution,
-    );
+    if state.kanban_visible {
+        panels::kanban::render_kanban(frame, right_area, state);
+    } else {
+        panels::evolution::render_evolution(
+            frame,
+            right_area,
+            state,
+            state.focused_panel == FocusedPanel::Evolution,
+        );
+    }
 
     // ── Render mini-log during Planning/Executing ──
     if needs_mini_log {

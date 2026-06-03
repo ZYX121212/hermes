@@ -250,6 +250,20 @@ pub struct ContextRefItem {
     pub preview: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct KanbanItem {
+    pub id: String,
+    pub title: String,
+    pub status: KanbanStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KanbanStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
 pub struct TuiAppState {
     // Header
     pub agent_name: String,
@@ -296,6 +310,8 @@ pub struct TuiAppState {
     pub context_ref_query: String,
     pub context_ref_items: Vec<ContextRefItem>,
     pub context_ref_selected: usize,
+    pub kanban_visible: bool,
+    pub kanban_items: Vec<KanbanItem>,
     pub help_visible: bool,
     pub settings_visible: bool,
 
@@ -394,6 +410,8 @@ impl TuiAppState {
             context_ref_query: String::new(),
             context_ref_items: Vec::new(),
             context_ref_selected: 0,
+            kanban_visible: false,
+            kanban_items: Vec::new(),
             help_visible: false,
             settings_visible: false,
             input_history: VecDeque::with_capacity(50),
