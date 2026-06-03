@@ -212,6 +212,18 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     if let Some(ref result) = state.slash_command_popup {
         panels::slash_command::render_slash_result(frame, area, result);
     }
+
+    // ── Render context_ref popup above footer ──
+    if state.context_ref_active && !state.context_ref_items.is_empty() {
+        // Render above the footer
+        let _ref_area = ratatui::layout::Rect {
+            x: footer_area.x + 1,
+            y: footer_area.y.saturating_sub(6),
+            width: 48.min(footer_area.width.saturating_sub(2)),
+            height: 6,
+        };
+        // context_ref will be added in a later task
+    }
 }
 
 /// Welcome screen shown when TUI starts before the first task.

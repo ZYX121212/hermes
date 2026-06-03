@@ -49,9 +49,23 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
 
     // Spinner: only show when agent is actually working
     if !state.agent_done && state.phase != AgentPhase::Idle {
-        let spinner = match state.frame_count % 8 {
-            0 => '⣾', 1 => '⣽', 2 => '⣻', 3 => '⢿',
-            4 => '⡿', 5 => '⣟', 6 => '⣯', _ => '⣷',
+        // Phase-aware spinner animation
+        let spinner = match state.phase {
+            AgentPhase::Planning => {
+                const BRAILLE: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+                BRAILLE[(state.frame_count as usize) % BRAILLE.len()]
+            }
+            AgentPhase::Executing => {
+                if state.frame_count % 4 < 2 { '▶' } else { '▷' }
+            }
+            AgentPhase::Reflecting => {
+                const DOTS: &[char] = &['◌', '◌', '◌'];
+                DOTS[(state.frame_count as usize / 4) % DOTS.len()]
+            }
+            _ => {
+                const SPINNER: &[char] = &['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
+                SPINNER[(state.frame_count as usize) % SPINNER.len()]
+            }
         };
         spans.push(Span::styled(
             format!(" {} ", spinner),

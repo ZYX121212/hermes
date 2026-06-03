@@ -77,8 +77,19 @@ pub fn render_execution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
             );
 
             let duration = step.duration_ms.map(|d| {
+                let formatted = if d < 1 {
+                    "<1ms".to_string()
+                } else if d < 1000 {
+                    format!("{}ms", d)
+                } else if d < 60_000 {
+                    format!("{:.1}s", d as f64 / 1000.0)
+                } else {
+                    let minutes = d / 60_000;
+                    let secs = (d % 60_000) / 1000;
+                    format!("{}m{}s", minutes, secs)
+                };
                 Span::styled(
-                    format!("  ({:.1}s)", d as f64 / 1000.0),
+                    format!("  ({})", formatted),
                     Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
                 )
             });
