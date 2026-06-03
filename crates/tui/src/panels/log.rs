@@ -7,10 +7,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, wrapped_line_count, LogEntry, LogFilter, TuiAppState};
+use crate::state::{clamp_scroll, render_scrollbar, wrapped_line_count, LogEntry, LogFilter, TuiAppState};
 use crate::theme;
 
 pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
     let title = format!("Log [{}]", state.log_filter.label());
     let block = theme::panel_block(&title, theme::MUTED, focused);
 
@@ -62,28 +65,31 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
             LogFilter::ErrorsOnly => e.is_error,
         })
         .collect();
-    let total_count = filtered.len();
-
-    for (fi, (orig_idx, entry)) in filtered.iter().enumerate() {
+    for (_orig_idx, entry) in filtered.iter() {
         let color = if entry.is_error {
             theme::RED
         } else {
-            let threshold = total_count.saturating_sub(3);
-            if fi < threshold {
-                theme::SUBTLE
-            } else {
-                theme::MUTED
-            }
+            theme::MUTED
         };
         let marker = if entry.is_error { "!" } else { "•" };
+        // Truncate message to 80 chars, append repeat count if >0
+        let max_msg = 80usize.saturating_sub(if entry.repeat_count > 0 { 6 } else { 0 });
+        let truncated = crate::state::truncate(&entry.message, max_msg);
+        let display_msg = if entry.repeat_count > 0 {
+            format!("{}  (x{})", truncated, entry.repeat_count + 1)
+        } else {
+            truncated
+        };
         lines.push(Line::from(vec![
             Span::styled(
                 format!(" {marker} "),
                 Style::default().fg(color).bg(theme::PANEL),
             ),
-            Span::styled(&entry.message, Style::default().fg(color).bg(theme::PANEL)),
+            Span::styled(
+                display_msg,
+                Style::default().fg(color).bg(theme::PANEL),
+            ),
         ]));
-        let _ = orig_idx; // keep original index for future use
     }
 
     // Calculate wrapped content height for scrollbar
@@ -105,13 +111,14 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .wrap(Wrap { trim: false })
-        .scroll((state.log_scroll, 0));
+        .scroll((clamp_scroll(state.log_scroll, content_height, viewport_h), 0));
 
     frame.render_widget(para, area);
 
     // Render scrollbar on the right edge (single widget for performance)
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(state.log_scroll, content_height, viewport_h);
+        let effective_scroll = clamp_scroll(state.log_scroll, content_height, viewport_h);
+        let bar = render_scrollbar(effective_scroll, content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {
@@ -133,6 +140,9 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
 
 /// Render a compact mini-log (3-line version used during Planning/Executing phases).
 pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
     let block = theme::panel_block("Activity", theme::MUTED, focused);
 
     let count = state.log_entries.len();
@@ -148,7 +158,7 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
         return;
     }
 
-    let start = count.saturating_sub(2);
+    let start = count.saturating_sub(3);
 
     let lines: Vec<Line> = state
         .log_entries
@@ -160,10 +170,14 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
             } else {
                 theme::MUTED
             };
-            Line::from(Span::styled(
-                crate::state::truncate(&entry.message, text_width),
-                Style::default().fg(color).bg(theme::PANEL),
-            ))
+            let max_msg = text_width.saturating_sub(if entry.repeat_count > 0 { 6 } else { 0 });
+            let truncated = crate::state::truncate(&entry.message, max_msg);
+            let display_msg = if entry.repeat_count > 0 {
+                format!("{}  (x{})", truncated, entry.repeat_count + 1)
+            } else {
+                truncated
+            };
+            Line::from(Span::styled(display_msg, Style::default().fg(color).bg(theme::PANEL)))
         })
         .collect();
 

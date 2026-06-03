@@ -7,10 +7,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, TuiAppState};
+use crate::state::{clamp_scroll, render_scrollbar, wrapped_line_count, TuiAppState};
 use crate::theme;
 
 pub fn render_evolution(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
     let block = theme::panel_block("Evolution", theme::GREEN, focused);
     let inner = block.inner(area);
     let narrow = inner.width < 36;
@@ -221,18 +224,29 @@ pub fn render_evolution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
         }
     }
 
-    let content_height = lines.len();
+    let content_text: String = lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<Vec<&str>>()
+                .join("")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content_height = wrapped_line_count(&content_text, inner.width.saturating_sub(1));
     let viewport_h = inner.height;
 
     let para = Paragraph::new(lines)
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
-        .scroll((state.evo_scroll, 0));
+        .scroll((clamp_scroll(state.evo_scroll, content_height, viewport_h), 0));
 
     frame.render_widget(para, area);
 
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(state.evo_scroll, content_height, viewport_h);
+        let bar = render_scrollbar(clamp_scroll(state.evo_scroll, content_height, viewport_h), content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

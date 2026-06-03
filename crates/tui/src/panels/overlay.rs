@@ -7,10 +7,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, StepOutputOverlay};
+use crate::state::{clamp_scroll, render_scrollbar, wrapped_line_count, StepOutputOverlay};
 use crate::theme;
 
 pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay) {
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
     // Clear entire area
     frame.render_widget(Clear, area);
 
@@ -75,18 +78,29 @@ pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay
         )));
     }
 
-    let content_height = lines.len();
+    let content_text: String = lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<Vec<&str>>()
+                .join("")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content_height = wrapped_line_count(&content_text, inner.width.saturating_sub(1));
 
     let para = Paragraph::new(lines)
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
-        .scroll((overlay.scroll, 0));
+        .scroll((clamp_scroll(overlay.scroll, content_height, viewport_h), 0));
 
     frame.render_widget(para, overlay_rect);
 
     // Scrollbar
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(overlay.scroll, content_height, viewport_h);
+        let bar = render_scrollbar(clamp_scroll(overlay.scroll, content_height, viewport_h), content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

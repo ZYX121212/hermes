@@ -7,10 +7,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{render_scrollbar, TuiAppState};
+use crate::state::{clamp_scroll, render_scrollbar, TuiAppState};
 use crate::theme;
 
 pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
     let block = theme::panel_block("Results", theme::GREEN, focused);
 
     let inner = block.inner(area);
@@ -20,35 +23,28 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
     let mut lines: Vec<Line> = Vec::new();
 
     // Summary (including streaming preview)
+    let summary_style = Style::default().fg(theme::TEXT).bg(theme::PANEL);
     if let Some(ref summary) = state.summary {
-        lines.push(Line::from(vec![
-            Span::styled(
-                " SUMMARY ",
-                Style::default()
-                    .fg(theme::BG)
-                    .bg(theme::GREEN)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" {}", summary),
-                Style::default().fg(theme::TEXT).bg(theme::PANEL),
-            ),
-        ]));
+        let mut spans = vec![Span::styled(
+            " SUMMARY ",
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::GREEN)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(crate::rich_text::render_markdown_line(summary, summary_style).spans);
+        lines.push(Line::from(spans));
     } else if !state.summary_streaming_buffer.is_empty() {
         let preview = crate::state::truncate(&state.summary_streaming_buffer, text_width.saturating_sub(12));
-        lines.push(Line::from(vec![
-            Span::styled(
-                " SUMMARY ",
-                Style::default()
-                    .fg(theme::BG)
-                    .bg(theme::YELLOW)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" {}…", preview),
-                Style::default().fg(theme::TEXT).bg(theme::PANEL),
-            ),
-        ]));
+        let mut spans = vec![Span::styled(
+            " SUMMARY ",
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::YELLOW)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(crate::rich_text::render_markdown_line(&preview, summary_style).spans);
+        lines.push(Line::from(spans));
     } else {
         lines.push(theme::empty("暂无结果"));
     }
@@ -127,10 +123,14 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
                 let preview_indent = format!("{}    ", indent);
                 let available = text_width.saturating_sub(preview_indent.len());
                 let preview_line = crate::state::truncate(preview, available);
-                lines.push(Line::from(Span::styled(
-                    format!("{}{}", preview_indent, preview_line),
-                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
-                )));
+                let indent_style = Style::default().fg(theme::SUBTLE).bg(theme::PANEL);
+                let mut spans = vec![ratatui::text::Span::styled(
+                    preview_indent.clone(),
+                    indent_style,
+                )];
+                let md_spans = crate::rich_text::render_markdown_line(&preview_line, indent_style).spans;
+                spans.extend(md_spans);
+                lines.push(Line::from(spans));
             }
         }
     }
@@ -168,17 +168,19 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
 
     let content_height = lines.len();
 
+    let effective_scroll = clamp_scroll(state.log_scroll, content_height, viewport_h);
+
     let para = Paragraph::new(lines)
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .wrap(Wrap { trim: false })
-        .scroll((state.log_scroll, 0));
+        .scroll((effective_scroll, 0));
 
     frame.render_widget(para, area);
 
     // Scrollbar
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(state.log_scroll, content_height, viewport_h);
+        let bar = render_scrollbar(effective_scroll, content_height, viewport_h);
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

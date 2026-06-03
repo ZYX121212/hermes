@@ -11,12 +11,21 @@ use crate::state::{AgentPhase, FocusedPanel, LeftTab, TuiAppState};
 use crate::theme;
 
 pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState) {
+    let error_count = state.log_entries.iter().filter(|e| e.is_error).count();
+    let error_indicator = if error_count > 0 && !state.log_visible {
+        format!(" ⚠ {} errors (l: toggle) |", error_count)
+    } else {
+        String::new()
+    };
+
     let hint = if state.help_visible {
         "[Esc] 关闭帮助".to_string()
     } else if state.settings_visible {
         "[Esc] 关闭  [1/2/3] 切换模式".to_string()
     } else if state.output_overlay.is_some() {
         "[Esc] 关闭  [↑↓] 滚动  [←→/n/p] 切步骤  [Ctrl+Y] 复制".to_string()
+    } else if state.slash_command_active {
+        "[Enter] 执行  [Esc] 取消  [←→] 移光标  : /help 查看全部命令".to_string()
     } else if state.awaiting_input {
         "[Enter] 提交  [Esc] 取消  [Ctrl+W] 删词  [Ctrl+U] 清行  [←→] 移光标".to_string()
     } else {
@@ -44,7 +53,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState) {
                 format!("[↑↓] 滚动  [f] 过滤{ctx_hint}{global}")
             }
             (FocusedPanel::Evolution, _, _, _) => {
-                format!("[↑↓] 滚动  [Enter] 折叠全部  [w]权重 [s]统计 [m]元信息{global}")
+                format!("[↑↓] 滚动  [Enter] 折叠全部  [w]权重 [t]统计 [m]元信息{global}")
             }
             (FocusedPanel::MiniLog, _, _, _) => {
                 format!("[↑↓] 滚动  [f] 过滤{ctx_hint}{global}")
@@ -55,11 +64,18 @@ pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         }
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ", Style::default().bg(theme::BG)),
-        Span::styled("⌘ ", Style::default().fg(theme::CYAN).bg(theme::BG)),
-        Span::styled(hint, Style::default().fg(theme::MUTED).bg(theme::BG)),
-    ]);
+    ];
+    if !error_indicator.is_empty() {
+        spans.push(Span::styled(
+            &error_indicator,
+            Style::default().fg(theme::RED).bg(theme::BG),
+        ));
+    }
+    spans.push(Span::styled("⌘ ", Style::default().fg(theme::CYAN).bg(theme::BG)));
+    spans.push(Span::styled(hint, Style::default().fg(theme::MUTED).bg(theme::BG)));
+    let line = Line::from(spans);
     let para = Paragraph::new(line).style(Style::default().bg(theme::BG));
     frame.render_widget(para, area);
 }
