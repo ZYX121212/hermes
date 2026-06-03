@@ -9,3 +9,5 @@ pub mod overlay;
 pub mod plan;
 pub mod results;
 pub mod settings;
+pub mod context_ref;
+pub mod slash_command;

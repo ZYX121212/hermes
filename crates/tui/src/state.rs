@@ -9,6 +9,8 @@ use evolution::EvolutionEngine;
 use parking_lot::Mutex;
 use uuid::Uuid;
 
+use crate::settings_store::UserSettings;
+
 /// Shared input state for TUI interactive mode.
 pub struct TuiInput {
     pub awaiting: AtomicBool,
@@ -19,6 +21,14 @@ pub struct TuiInput {
     pub gateway_mode: Option<Arc<Mutex<Option<String>>>>,
     /// Shared stop flag from agent context — set to cancel current operation.
     pub stop_flag: Option<Arc<AtomicBool>>,
+    /// User settings changed flag — main loop polls this to hot-reload components.
+    pub settings_changed: Mutex<Option<UserSettings>>,
+}
+
+impl Default for TuiInput {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TuiInput {
@@ -30,6 +40,7 @@ impl TuiInput {
             cursor: Mutex::new(0),
             gateway_mode: None,
             stop_flag: None,
+            settings_changed: Mutex::new(None),
         }
     }
 
@@ -131,6 +142,48 @@ impl LeftTab {
     }
 }
 
+/// Settings panel page tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    Llm,
+    Search,
+    Finance,
+}
+
+impl SettingsTab {
+    pub fn next(self) -> Self {
+        match self {
+            SettingsTab::Llm => SettingsTab::Search,
+            SettingsTab::Search => SettingsTab::Finance,
+            SettingsTab::Finance => SettingsTab::Llm,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            SettingsTab::Llm => SettingsTab::Finance,
+            SettingsTab::Search => SettingsTab::Llm,
+            SettingsTab::Finance => SettingsTab::Search,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsTab::Llm => "LLM",
+            SettingsTab::Search => "搜索",
+            SettingsTab::Finance => "金融",
+        }
+    }
+}
+
+/// Slash-command result popup content.
+#[derive(Debug, Clone)]
+pub struct SlashResult {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub scroll: u16,
+}
+
 /// Full-screen overlay for viewing complete step output.
 #[derive(Debug, Clone)]
 pub struct StepOutputOverlay {
@@ -165,6 +218,7 @@ pub struct StepExecState {
 pub struct LogEntry {
     pub message: String,
     pub is_error: bool,
+    pub repeat_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +241,13 @@ impl LogFilter {
             LogFilter::ErrorsOnly => "Errors",
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextRefItem {
+    pub source: String,
+    pub label: String,
+    pub preview: String,
 }
 
 pub struct TuiAppState {
@@ -229,8 +290,17 @@ pub struct TuiAppState {
     pub results_visible: bool,
     pub input_text: String,
     pub input_cursor: usize,
+    /// Multiline input line count (1–8)
+    pub input_line_count: u8,
+    pub context_ref_active: bool,
+    pub context_ref_query: String,
+    pub context_ref_items: Vec<ContextRefItem>,
+    pub context_ref_selected: usize,
     pub help_visible: bool,
     pub settings_visible: bool,
+
+    // Token usage tracker (shared with agent)
+    pub usage_tracker: Option<Arc<llm::usage::UsageTracker>>,
 
     // Search
     pub search_query: String,
@@ -238,9 +308,16 @@ pub struct TuiAppState {
     pub search_match_lines: Vec<usize>,
     pub search_current_match: Option<usize>,
 
+    // Slash command mode
+    pub slash_command_active: bool,
+    pub slash_command_buffer: String,
+    pub slash_command_cursor: usize,
+    pub slash_command_popup: Option<SlashResult>,
+
     // Input history
     pub input_history: VecDeque<String>,
     pub input_history_pos: Option<usize>,
+    pub input_draft: String, // saved current text before browsing history
 
     // Scroll offsets
     pub plan_scroll: u16,
@@ -269,6 +346,19 @@ pub struct TuiAppState {
     pub gateway_mode: String,
     pub last_route_decision: Option<String>,
     pub shg_triggered: bool,
+
+    // Log panel visibility
+    pub log_visible: bool,
+
+    // Settings panel state
+    pub settings_tab: SettingsTab,
+    pub settings_field_focus: usize,
+    pub settings_editing: bool,
+    pub settings_edit_buffer: String,
+    pub settings_dirty: bool,
+    pub settings_saved_flash: u8, // frames remaining for "已保存" flash (0 = hidden)
+    pub settings_dirty_confirm: bool, // true when Esc/s pressed once while dirty
+    pub user_settings: UserSettings,
 }
 
 impl TuiAppState {
@@ -299,10 +389,16 @@ impl TuiAppState {
             results_visible: true,
             input_text: String::new(),
             input_cursor: 0,
+            input_line_count: 1,
+            context_ref_active: false,
+            context_ref_query: String::new(),
+            context_ref_items: Vec::new(),
+            context_ref_selected: 0,
             help_visible: false,
             settings_visible: false,
             input_history: VecDeque::with_capacity(50),
             input_history_pos: None,
+            input_draft: String::new(),
             plan_scroll: 0,
             exec_scroll: 0,
             log_scroll: 0,
@@ -319,10 +415,24 @@ impl TuiAppState {
             gateway_mode: String::new(),
             last_route_decision: None,
             shg_triggered: false,
+            log_visible: false,
+            settings_tab: SettingsTab::Llm,
+            settings_field_focus: 0,
+            settings_editing: false,
+            settings_edit_buffer: String::new(),
+            settings_dirty: false,
+            settings_saved_flash: 0,
+            settings_dirty_confirm: false,
+            user_settings: UserSettings::default(),
+            usage_tracker: None,
             search_query: String::new(),
             search_active: false,
             search_match_lines: Vec::new(),
             search_current_match: None,
+            slash_command_active: false,
+            slash_command_buffer: String::new(),
+            slash_command_cursor: 0,
+            slash_command_popup: None,
         }
     }
 }
@@ -335,6 +445,68 @@ pub fn truncate(text: &str, max_chars: usize) -> String {
         let truncated: String = text.chars().take(max_chars).collect();
         format!("{}…", truncated)
     }
+}
+
+/// Strip HTML tags and decode common HTML entities from text.
+pub fn strip_html(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            // Skip until '>'
+            for c in chars.by_ref() {
+                if c == '>' {
+                    break;
+                }
+            }
+        } else if ch == '&' {
+            // Collect entity name up to ';'
+            let mut entity = String::new();
+            let mut found_semi = false;
+            for c in chars.by_ref() {
+                if c == ';' {
+                    found_semi = true;
+                    break;
+                }
+                entity.push(c);
+                if entity.len() > 8 {
+                    break;
+                }
+            }
+            if found_semi {
+                match entity.as_str() {
+                    "lt" => result.push('<'),
+                    "gt" => result.push('>'),
+                    "amp" => result.push('&'),
+                    "quot" => result.push('"'),
+                    "apos" | "#39" => result.push('\''),
+                    "nbsp" => result.push(' '),
+                    _ => {
+                        // numeric entities like &#123;
+                        if let Some(num_str) = entity.strip_prefix("#") {
+                            if let Ok(n) = num_str.parse::<u32>() {
+                                if let Some(c) = char::from_u32(n) {
+                                    result.push(c);
+                                    continue;
+                                }
+                            }
+                        }
+                        // unknown entity — keep as-is
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
+                }
+            } else {
+                // No closing semicolon — treat & as literal
+                result.push('&');
+                result.push_str(&entity);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Strip ANSI escape sequences from text.
@@ -365,10 +537,16 @@ pub fn wrapped_line_count(text: &str, width: u16) -> usize {
             chars.saturating_sub(1) / width + 1
         })
         .sum::<usize>()
-        .max(1)
 }
 
 /// Render a character-based scrollbar for a panel.
+/// Clamp scroll position to a safe range: 0 .. max(0, content_lines - viewport_h).
+/// Prevents overflow in ratatui's `area.height + scroll.y` calculation.
+pub fn clamp_scroll(scroll: u16, content_lines: usize, viewport_h: u16) -> u16 {
+    let max = content_lines.saturating_sub(viewport_h as usize).min(10_000) as u16;
+    scroll.min(max)
+}
+
 /// `scroll`: current scroll offset, `content_height`: total lines of content,
 /// `viewport_height`: visible lines in the panel.
 pub fn render_scrollbar(scroll: u16, content_height: usize, viewport_height: u16) -> String {
@@ -611,8 +789,66 @@ mod tests {
         assert!(!state.should_quit);
         assert!(!state.agent_done);
         assert!(state.results_visible);
+        assert!(!state.log_visible);
         assert!(state.output_overlay.is_none());
         assert!(state.exec_selected_index.is_none());
+    }
+
+    // ── strip_html ──
+
+    #[test]
+    fn test_strip_html_removes_tags() {
+        assert_eq!(strip_html("<div>hello</div>"), "hello");
+        assert_eq!(strip_html("<p>text</p>"), "text");
+        assert_eq!(strip_html("<br/>"), "");
+        assert_eq!(strip_html("<br />"), "");
+    }
+
+    #[test]
+    fn test_strip_html_nested_tags() {
+        assert_eq!(
+            strip_html("<div><p>nested</p></div>"),
+            "nested"
+        );
+        assert_eq!(
+            strip_html("<span class=\"foo\">content</span>"),
+            "content"
+        );
+    }
+
+    #[test]
+    fn test_strip_html_decodes_entities() {
+        assert_eq!(strip_html("&lt;div&gt;"), "<div>");
+        assert_eq!(strip_html("&amp;"), "&");
+        assert_eq!(strip_html("&quot;"), "\"");
+        assert_eq!(strip_html("&apos;"), "'");
+        assert_eq!(strip_html("&#39;"), "'");
+        assert_eq!(strip_html("&nbsp;"), " ");
+    }
+
+    #[test]
+    fn test_strip_html_mixed_content() {
+        assert_eq!(
+            strip_html("<div>hello <b>world</b></div>"),
+            "hello world"
+        );
+        assert_eq!(
+            strip_html("text &amp; <br/> more"),
+            "text &  more"
+        );
+    }
+
+    #[test]
+    fn test_strip_html_plain_text_passthrough() {
+        assert_eq!(strip_html("plain text"), "plain text");
+        assert_eq!(strip_html(""), "");
+    }
+
+    #[test]
+    fn test_strip_html_incomplete_entity() {
+        // & without ; should be kept as-is
+        assert_eq!(strip_html("a & b"), "a & b");
+        assert_eq!(strip_html("a &lt b"), "a &lt b");
     }
 
     // ── UTF-8 boundary safety (regression test for content_full truncation) ──

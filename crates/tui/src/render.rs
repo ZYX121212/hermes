@@ -13,6 +13,9 @@ use crate::theme;
 
 pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     let area = frame.area();
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     frame.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
 
     // ── Vertical split: header (1), main (fill), mini-log (opt), footer (1) ──
@@ -108,7 +111,23 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
             }
         }
         _ => {
-            if state.agent_done && state.results_visible {
+            if state.turn == 0 && !state.agent_done && state.phase == AgentPhase::Idle {
+                render_welcome(frame, left_area, state);
+            } else if state.agent_done && state.results_visible {
+                panels::results::render_results(
+                    frame,
+                    left_area,
+                    state,
+                    state.focused_panel == FocusedPanel::MainLeft,
+                );
+            } else if state.log_visible {
+                panels::log::render_log(
+                    frame,
+                    left_area,
+                    state,
+                    state.focused_panel == FocusedPanel::MainLeft,
+                );
+            } else if state.agent_done && state.summary.is_some() {
                 panels::results::render_results(
                     frame,
                     left_area,
@@ -116,12 +135,20 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
                     state.focused_panel == FocusedPanel::MainLeft,
                 );
             } else {
-                panels::log::render_log(
-                    frame,
-                    left_area,
-                    state,
-                    state.focused_panel == FocusedPanel::MainLeft,
-                );
+                // Log hidden: show minimal panel
+                let block = theme::panel_block("Hermess", theme::MUTED, state.focused_panel == FocusedPanel::MainLeft);
+                let hint = if state.agent_done {
+                    "按 l 显示日志"
+                } else {
+                    "运行中... (l: 日志)"
+                };
+                let text = Paragraph::new(Line::from(Span::styled(
+                    hint,
+                    Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+                )))
+                .block(block)
+                .style(Style::default().bg(theme::PANEL));
+                frame.render_widget(text, left_area);
             }
         }
     }
@@ -148,9 +175,19 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     panels::header::render_header(frame, header_area, state);
 
     // ── Render footer / input bar ──
-    // Always show input bar in TUI mode (footer hints are inline in the input bar).
-    let input_focused = state.focused_panel == FocusedPanel::Input;
-    panels::input::render_input(frame, footer_area, state, input_focused);
+    // When the agent is waiting for user input, show the text entry bar.
+    // Otherwise, show context-sensitive keyboard shortcut hints.
+    if state.awaiting_input || state.search_active || state.slash_command_active {
+        let input_focused = state.focused_panel == FocusedPanel::Input;
+        panels::input::render_input(frame, footer_area, state, input_focused);
+    } else {
+        panels::footer::render_footer(frame, footer_area, state);
+    }
+
+    // ── Render @-mention context reference popup above input area ──
+    if state.context_ref_active {
+        panels::context_ref::render_context_ref(frame, footer_area, state);
+    }
 
     // ── Render help overlay (on top of everything) ──
     if state.help_visible {
@@ -165,5 +202,137 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     // ── Render output overlay (on top of everything, including help) ──
     if let Some(ref overlay) = state.output_overlay {
         panels::overlay::render_overlay(frame, area, overlay);
+    }
+
+    // ── Render slash command result popup (on top of output overlay) ──
+    if let Some(ref result) = state.slash_command_popup {
+        panels::slash_command::render_slash_result(frame, area, result);
+    }
+}
+
+/// Welcome screen shown when TUI starts before the first task.
+fn render_welcome(frame: &mut Frame, area: ratatui::layout::Rect, state: &TuiAppState) {
+    use ratatui::layout::{Constraint, Layout};
+    use ratatui::widgets::Wrap;
+
+    if area.width < 2 || area.height < 4 {
+        return;
+    }
+
+    let block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme::CYAN))
+        .style(Style::default().bg(theme::PANEL))
+        .title(theme::title_line("Welcome", theme::CYAN));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Full welcome when there's enough space
+    if area.height >= 13 {
+        let chunks = Layout::vertical([
+            Constraint::Length(1), // spacer
+            Constraint::Length(5), // welcome text
+            Constraint::Length(1), // spacer
+            Constraint::Length(4), // settings info
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+        let welcome_lines = vec![
+            Line::from(Span::styled(
+                "  Hermess AI Agent — 智能任务编排与路由",
+                Style::default()
+                    .fg(theme::CYAN)
+                    .bg(theme::PANEL)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "  基于 LLM 的多步骤推理与工具调用框架",
+                Style::default().fg(theme::MUTED).bg(theme::PANEL),
+            )),
+            Line::from(Span::styled("", Style::default().bg(theme::PANEL))),
+            Line::from(Span::styled(
+                "  按 Enter 开始输入任务，或输入 / 进入搜索",
+                Style::default().fg(theme::TEXT).bg(theme::PANEL),
+            )),
+        ];
+        frame.render_widget(
+            Paragraph::new(welcome_lines).style(Style::default().bg(theme::PANEL)),
+            chunks[1],
+        );
+
+        let settings_hint = if state.user_settings.llm_api_key.is_empty() {
+            vec![
+                Line::from(Span::styled(
+                    "  ⚡ 快速开始:",
+                    Style::default()
+                        .fg(theme::YELLOW)
+                        .bg(theme::PANEL)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    "  1. 按 s 打开设置面板",
+                    Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                )),
+                Line::from(Span::styled(
+                    "  2. 填入 LLM API Key 和 Provider",
+                    Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                )),
+                Line::from(Span::styled(
+                    "  3. 按 Ctrl+S 保存，下次启动生效",
+                    Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                )),
+            ]
+        } else {
+            let provider_label = match state.user_settings.llm_provider.as_str() {
+                "anthropic" => "Anthropic",
+                "openai" => "OpenAI",
+                "deepseek" => "DeepSeek",
+                _ => "已配置",
+            };
+            vec![
+                Line::from(Span::styled(
+                    format!("  ✓ LLM: {provider_label} 已配置"),
+                    Style::default()
+                        .fg(theme::GREEN)
+                        .bg(theme::PANEL)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    format!("  模型: {}", if state.user_settings.llm_model.is_empty() { "(默认)" } else { &state.user_settings.llm_model }),
+                    Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                )),
+                Line::from(Span::styled("", Style::default().bg(theme::PANEL))),
+                Line::from(Span::styled(
+                    "  按 s 打开设置面板修改配置",
+                    Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                )),
+            ]
+        };
+
+        frame.render_widget(
+            Paragraph::new(settings_hint).style(Style::default().bg(theme::PANEL)).wrap(Wrap { trim: false }),
+            chunks[3],
+        );
+    } else {
+        // Slim welcome for small terminals
+        let lines = vec![
+            Span::styled(
+                "Hermess AI Agent",
+                Style::default()
+                    .fg(theme::CYAN)
+                    .bg(theme::PANEL)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " — 按 Enter 输入任务",
+                Style::default().fg(theme::TEXT).bg(theme::PANEL),
+            ),
+        ];
+        let hint = Paragraph::new(Line::from(lines))
+            .style(Style::default().bg(theme::PANEL));
+        frame.render_widget(hint, inner);
     }
 }

@@ -447,20 +447,40 @@ where
                                     state.input_draft.clear();
                                 }
                                 KeyCode::Enter => {
-                                    let mut buffer = tui_input.buffer.lock();
-                                    let text = buffer.clone();
-                                    if !text.is_empty() {
-                                        if state.input_history.len() >= 50 {
-                                            state.input_history.pop_front();
+                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        // Shift+Enter: insert newline for multiline input
+                                        let mut buffer = tui_input.buffer.lock();
+                                        let mut cursor = tui_input.cursor.lock();
+                                        let char_count = buffer.chars().count();
+                                        if *cursor > char_count {
+                                            *cursor = char_count;
                                         }
-                                        state.input_history.push_back(text.clone());
+                                        let byte_idx = buffer
+                                            .char_indices()
+                                            .nth(*cursor)
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(buffer.len());
+                                        buffer.insert(byte_idx, '\n');
+                                        *cursor += 1;
+                                        state.input_line_count = (state.input_line_count + 1).min(8);
+                                        // Deactivate context_ref on newline
+                                        state.context_ref_active = false;
+                                    } else {
+                                        let mut buffer = tui_input.buffer.lock();
+                                        let text = buffer.clone();
+                                        if !text.is_empty() {
+                                            if state.input_history.len() >= 50 {
+                                                state.input_history.pop_front();
+                                            }
+                                            state.input_history.push_back(text.clone());
+                                        }
+                                        state.input_history_pos = None;
+                                        state.input_draft.clear();
+                                        buffer.clear();
+                                        drop(buffer);
+                                        *tui_input.cursor.lock() = 0;
+                                        *tui_input.submitted.lock() = Some(text);
                                     }
-                                    state.input_history_pos = None;
-                                    state.input_draft.clear();
-                                    buffer.clear();
-                                    drop(buffer);
-                                    *tui_input.cursor.lock() = 0;
-                                    *tui_input.submitted.lock() = Some(text);
                                 }
                                 KeyCode::Backspace => {
                                     let mut buffer = tui_input.buffer.lock();
@@ -622,6 +642,22 @@ where
                                             .unwrap_or(buffer.len());
                                         buffer.insert(byte_idx, c);
                                         *cursor += 1;
+                                        drop(cursor);
+                                        drop(buffer);
+
+                                        // @-mention context reference detection
+                                        if c == '@' {
+                                            state.context_ref_active = true;
+                                            state.context_ref_query = "@".to_string();
+                                            crate::panels::context_ref::populate_suggestions(&mut *state);
+                                        } else if state.context_ref_active {
+                                            if c == ' ' {
+                                                state.context_ref_active = false;
+                                            } else {
+                                                state.context_ref_query.push(c);
+                                                crate::panels::context_ref::populate_suggestions(&mut *state);
+                                            }
+                                        }
                                     }
                                 }
                                 KeyCode::Tab => {
