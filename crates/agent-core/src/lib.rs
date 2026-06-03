@@ -17,7 +17,13 @@ pub struct MemoryChunk {
     pub content: String,
     pub embedding: Vec<f32>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Importance score. Higher = more valuable to retain.
+    /// Default: 1.0 (neutral). Failures/lessons score higher.
+    #[serde(default = "default_importance")]
+    pub importance: f64,
 }
+
+fn default_importance() -> f64 { 1.0 }
 
 /// User input combined with environment snapshot and relevant history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +33,12 @@ pub struct Observation {
     pub user_input: String,
     pub env_state: serde_json::Value,
     pub memory_ctx: Vec<MemoryChunk>,
+    /// Multi-turn conversation history (user_input, assistant_response) pairs.
+    #[serde(default)]
+    pub conversation_history: Vec<(String, String)>,
+    /// Recent evolution insights for feedback into planning.
+    #[serde(default)]
+    pub recent_insights: Vec<String>,
 }
 
 /// A single execution step within a plan.
@@ -142,14 +154,25 @@ pub struct ExecutionResult {
     pub outputs: Vec<StepOutput>,
     pub success: bool,
     pub duration_ms: u64,
+    /// The original user task that triggered this execution.
+    /// Used by the reflector to generate context-aware insights.
+    pub user_input: Option<String>,
 }
 
 impl ExecutionResult {
+    /// Build a semantic strategy ID from the tools used and success pattern.
+    /// This ensures the evolution engine tracks meaningful patterns rather
+    /// than ephemeral step UUIDs.
     pub fn strategy_id(&self) -> String {
-        self.outputs
-            .first()
-            .map(|o| o.step_id.to_string())
-            .unwrap_or_default()
+        let tools: Vec<String> = self
+            .outputs
+            .iter()
+            .map(|o| format!("{}({})", o.tool, if o.success { "ok" } else { "fail" }))
+            .collect();
+        if tools.is_empty() {
+            return "empty".into();
+        }
+        tools.join("+")
     }
 }
 
@@ -161,6 +184,22 @@ pub struct Insight {
     pub score: f64,
     pub embedding: Vec<f32>,
     pub lesson: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingSubPhase {
+    CallingLlm,
+    ParsingResponse,
+    ExecutingTool,
+    WaitingForInput,
+    Idle,
 }
 
 /// Events emitted by agent components during a run loop iteration.
@@ -259,6 +298,33 @@ pub enum AgentEvent {
         shg_triggered: bool,
         reason: String,
     },
+
+    // ── Task tracking (kanban) ──
+    TaskUpdated {
+        task_id: String,
+        title: String,
+        status: TaskStatus,
+    },
+
+    // ── Thinking sub-phase ──
+    ThinkingPhaseChanged {
+        sub_phase: ThinkingSubPhase,
+    },
+
+    // ── Personality ──
+    SetPersonality {
+        name: String,
+    },
+
+    // ── Context compression ──
+    CompressContext,
+
+    // ── Checkpoint ──
+    SaveCheckpoint,
+    RollbackCheckpoint,
+
+    // ── Session ──
+    ResetSession,
 
     // ── Errors ──
     AgentError {
