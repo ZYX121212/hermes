@@ -962,6 +962,55 @@ where
                                 KeyCode::Char('s') | KeyCode::F(2) => {
                                     state.settings_visible = !state.settings_visible;
                                 }
+                                KeyCode::Char('k')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    state.kanban_visible = !state.kanban_visible;
+                                    let msg = format!("看板: {}", if state.kanban_visible { "已显示" } else { "已隐藏" });
+                                    push_log(&mut state, msg, false);
+                                }
+                                KeyCode::Char('t')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    let name = format!("会话{}", state.session_tabs.len() + 1);
+                                    state.session_tabs.push(crate::state::SessionTab { name });
+                                    state.active_tab_index = state.session_tabs.len() - 1;
+                                    push_log(&mut state, "已创建新标签".into(), false);
+                                }
+                                KeyCode::Char('w')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if state.session_tabs.len() > 1 {
+                                        let idx = state.active_tab_index;
+                                        state.session_tabs.remove(idx);
+                                        if idx >= state.session_tabs.len() {
+                                            state.active_tab_index = state.session_tabs.len() - 1;
+                                        }
+                                        push_log(&mut state, "已关闭标签".into(), false);
+                                    }
+                                }
+                                KeyCode::Left
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if state.session_tabs.len() > 1 {
+                                        if state.active_tab_index > 0 {
+                                            state.active_tab_index -= 1;
+                                        } else {
+                                            state.active_tab_index = state.session_tabs.len() - 1;
+                                        }
+                                    }
+                                }
+                                KeyCode::Right
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if state.session_tabs.len() > 1 {
+                                        if state.active_tab_index + 1 < state.session_tabs.len() {
+                                            state.active_tab_index += 1;
+                                        } else {
+                                            state.active_tab_index = 0;
+                                        }
+                                    }
+                                }
                                 KeyCode::BackTab => {
                                     // Don't change focus when search has active matches
                                     if state.search_match_lines.is_empty() {
@@ -1168,6 +1217,13 @@ fn settings_cycle_dropdown(state: &mut TuiAppState, label: &str) {
                 "tushare" => "ftshare".into(),
                 _ => String::new(),
             };
+        }
+        "预设主题" => {
+            let names = crate::theme::Theme::preset_names();
+            let current = state.theme_preset.as_str();
+            let pos = names.iter().position(|&n| n == current).unwrap_or(0);
+            let next_idx = (pos + 1) % names.len();
+            state.theme_preset = names[next_idx].to_string();
         }
         _ => {}
     }
@@ -1379,7 +1435,30 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             push_log(state, msg, false);
         }
         "/personality" => {
-            push_log(state, format!("人格设置: {} (需要后端支持)", rest), false);
+            let personalities = vec!["default", "concise", "verbose", "creative", "analytical"];
+            let lines = if rest.is_empty() {
+                let mut lines = vec![
+                    "可用人格:".into(),
+                    String::new(),
+                ];
+                for p in &personalities {
+                    lines.push(format!("  - {}", p));
+                }
+                lines.push(String::new());
+                lines.push("使用 /personality <名称> 切换人格".into());
+                lines
+            } else {
+                vec![
+                    format!("  人格已设置为: {}", rest),
+                    String::new(),
+                    "  (需要后端支持)".into(),
+                ]
+            };
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Personality".into(),
+                lines,
+                scroll: 0,
+            });
         }
         "/status" => {
             let completed = state.exec_completed_steps;
@@ -1440,14 +1519,28 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             } else {
                 format!("{}m{}s", secs / 60, secs % 60)
             };
-            let lines = vec![
+            let mut lines = vec![
                 format!("  回合数: {}", state.turn),
                 format!("  耗时: {}", elapsed),
                 format!("  已执行步骤: {} / {}", state.exec_completed_steps, state.exec_total_steps),
                 format!("  进化统计: {} 条 insight", state.evolution.insight_count()),
                 String::new(),
-                "  详细 token 用量请查看 LLM provider 后台。".into(),
             ];
+            if let Some(ref tracker) = state.usage_tracker {
+                let snap = tracker.snapshot();
+                lines.push("  ── Token 用量 ──".into());
+                lines.push(format!("  Prompt tokens:     {}", snap.prompt_tokens));
+                lines.push(format!("  Completion tokens: {}", snap.completion_tokens));
+                lines.push(format!("  Total tokens:      {}", snap.prompt_tokens + snap.completion_tokens));
+                lines.push(format!("  估算费用:          ${:.6}", snap.estimated_cost_usd));
+                lines.push(String::new());
+                lines.push(format!("  模型: {}", snap.model));
+                lines.push(format!("  总调用次数: {}", snap.total_calls));
+            } else {
+                lines.push("  UsageTracker 未连接".into());
+                lines.push(String::new());
+                lines.push("  详细 token 用量请查看 LLM provider 后台。".into());
+            }
             state.slash_command_popup = Some(crate::state::SlashResult {
                 title: "Usage".into(),
                 lines,
@@ -1520,7 +1613,21 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             });
         }
         "/checkpoint" => {
-            push_log(state, "[checkpoint] 功能需要后端事件 plumbing，暂不可用。使用 Ctrl+S 导出会话。".into(), false);
+            let lines = vec![
+                format!("  回合数: {}", state.turn),
+                format!("  步骤: {}/{} 已完成", state.exec_completed_steps, state.exec_total_steps),
+                format!("  日志条目: {} 个", state.log_entries.len()),
+                format!("  错误: {} 个", state.log_entries.iter().filter(|e| e.is_error).count()),
+                format!("  看板条目: {} 个", state.kanban_items.len()),
+                format!("  进化 insights: {} 条", state.evolution.insight_count()),
+                String::new(),
+                "  使用 Ctrl+S 导出完整会话。".into(),
+            ];
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Checkpoint".into(),
+                lines,
+                scroll: 0,
+            });
         }
         "/rollback" => {
             push_log(state, "[rollback] 功能需要后端事件 plumbing，暂不可用。".into(), false);
@@ -1529,19 +1636,134 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             push_log(state, "[diff] 功能需要后端事件 plumbing，暂不可用。".into(), false);
         }
         "/new" => {
-            push_log(state, "[new] 需要会话管理器支持。请重新启动 Hermess 开始新会话。".into(), false);
+            state.turn = 0;
+            state.phase = AgentPhase::Idle;
+            state.agent_done = false;
+            state.streaming_buffer.clear();
+            state.summary_streaming_buffer.clear();
+            state.executions.clear();
+            state.log_entries.clear();
+            state.kanban_items.clear();
+            state.plan_ready = false;
+            state.plan_steps_count = 0;
+            state.total_duration_ms = None;
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "New Session".into(),
+                lines: vec!["已重置会话状态".into()],
+                scroll: 0,
+            });
         }
         "/load" => {
-            push_log(state, format!("[load] 需要会话管理器支持: {}", if rest.is_empty() { "(请指定会话名)" } else { &rest }), false);
+            if rest.is_empty() {
+                state.slash_command_popup = Some(crate::state::SlashResult {
+                    title: "Load Session".into(),
+                    lines: vec!["用法: /load <会话名>".into(), String::new(), "已保存会话可通过 /sessions 查看。".into()],
+                    scroll: 0,
+                });
+            } else {
+                let session_path = home_dir().join(".hermess").join("sessions").join(format!("{}.json", rest));
+                match std::fs::read_to_string(&session_path) {
+                    Ok(content) => {
+                        let preview: String = content.chars().take(200).collect();
+                        let name = session_path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let mut lines = vec![
+                            format!("  会话名: {}", name),
+                            format!("  大小: {} 字节", content.len()),
+                            String::new(),
+                            "  内容预览:".into(),
+                            format!("    {}...", preview),
+                            String::new(),
+                            "  (完整加载需后端会话管理器支持)".into(),
+                        ];
+                        // Try to parse as JSON and extract some info
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(turn) = val.get("turn").and_then(|v| v.as_u64()) {
+                                lines.insert(1, format!("  回合数: {}", turn));
+                            }
+                        }
+                        state.slash_command_popup = Some(crate::state::SlashResult {
+                            title: "Load Session".into(),
+                            lines,
+                            scroll: 0,
+                        });
+                    }
+                    Err(_) => {
+                        state.slash_command_popup = Some(crate::state::SlashResult {
+                            title: "Load Session".into(),
+                            lines: vec!["未找到会话".into(), format!("  路径: {}", session_path.display())],
+                            scroll: 0,
+                        });
+                    }
+                }
+            }
         }
         "/memory" | "/recall" => {
-            push_log(state, format!("[{}] 需要后端 WorkingMemory 查询支持。", head.trim_start_matches('/')), false);
+            let cmd_name = head.trim_start_matches('/');
+            let lines = if rest.is_empty() {
+                vec![
+                    format!("  {} - 查询记忆", cmd_name),
+                    String::new(),
+                    format!("  用法: /{} <查询关键词>", cmd_name),
+                    "  示例: /memory 上周的bug修复".into(),
+                    String::new(),
+                    "  (需要后端 WorkingMemory 查询支持)".into(),
+                ]
+            } else {
+                vec![
+                    format!("  查询: {}", rest),
+                    String::new(),
+                    "  (需要后端 WorkingMemory 查询支持)".into(),
+                ]
+            };
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: cmd_name.to_string(),
+                lines,
+                scroll: 0,
+            });
         }
         "/compress" => {
-            push_log(state, "[compress] 需要后端上下文压缩支持。".into(), false);
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Compress".into(),
+                lines: vec!["请求压缩当前对话上下文".into(), String::new(), "(需要后端上下文压缩支持)".into()],
+                scroll: 0,
+            });
         }
-        "/cron" | "/kanban" => {
-            push_log(state, format!("[{}] 功能开发中。", head.trim_start_matches('/')), false);
+        "/cron" => {
+            let lines = vec![
+                "Cron 表达式格式:".into(),
+                String::new(),
+                "  * * * * *".into(),
+                "  │ │ │ │ │".into(),
+                "  │ │ │ │ └── 星期 (0-7)".into(),
+                "  │ │ │ └──── 月份 (1-12)".into(),
+                "  │ │ └────── 日期 (1-31)".into(),
+                "  │ └──────── 小时 (0-23)".into(),
+                "  └────────── 分钟 (0-59)".into(),
+                String::new(),
+                "  示例:".into(),
+                "  0 9 * * *    每天9点".into(),
+                "  */5 * * * *  每5分钟".into(),
+                "  0 0 1 * *    每月1号".into(),
+                String::new(),
+                "  (需要后端调度器支持)".into(),
+            ];
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Cron".into(),
+                lines,
+                scroll: 0,
+            });
+        }
+        "/kanban" => {
+            state.kanban_visible = !state.kanban_visible;
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Kanban".into(),
+                lines: vec![
+                    format!("  看板: {}", if state.kanban_visible { "已显示" } else { "已隐藏" }),
+                    String::new(),
+                    "  提示: Ctrl+K 也可切换看板。".into(),
+                ],
+                scroll: 0,
+            });
         }
         _ => {
             push_log(state, format!("未知命令: {}. 输入 : /help 查看可用命令。", head), false);

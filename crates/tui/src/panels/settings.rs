@@ -1,122 +1,267 @@
 // crates/tui/src/panels/settings.rs
-// Settings overlay showing gateway configuration and routing options.
+// Multi-tab settings overlay — LLM, search, finance configuration with live preview.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::state::TuiAppState;
+use crate::state::{SettingsTab, TuiAppState};
 use crate::theme;
 
+/// The kinds of settings fields we render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    Dropdown,
+    Toggle,
+    Text,
+}
+
+pub struct FieldDef {
+    pub label: &'static str,
+    pub kind: FieldKind,
+}
+
+impl FieldDef {
+    pub fn rendered_value(&self, state: &TuiAppState) -> String {
+        let s = &state.user_settings;
+        match self.label {
+            "提供商标识" => match s.llm_provider.as_str() {
+                "anthropic" => "Anthropic".into(),
+                "openai" => "OpenAI".into(),
+                "deepseek" => "DeepSeek".into(),
+                _ => if s.llm_provider.is_empty() {
+                    "(未设置)".into()
+                } else {
+                    s.llm_provider.clone()
+                }
+            },
+            "模型名称" => if s.llm_model.is_empty() {
+                "(使用默认)".into()
+            } else {
+                s.llm_model.clone()
+            },
+            "API Key" => crate::settings_store::UserSettings::mask_key(&s.llm_api_key),
+            "Base URL" => if s.llm_base_url.is_empty() {
+                "(使用默认)".into()
+            } else {
+                s.llm_base_url.clone()
+            },
+            "启用搜索" => if s.search_enabled { "● 已启用".into() } else { "○ 已关闭".into() },
+            "搜索 Key" => crate::settings_store::UserSettings::mask_key(&s.search_api_key),
+            "金融数据源" => match s.finance_provider.as_str() {
+                "sina" => "新浪财经 (免费, 无需Token)".into(),
+                "tushare" => "TuShare (免费注册)".into(),
+                "ftshare" => "FTShare".into(),
+                _ => "(未启用)".into(),
+            },
+            "TuShare Token" => crate::settings_store::UserSettings::mask_key(&s.finance_tushare_token),
+            "预设主题" => state.theme_preset.clone(),
+            _ => "?".into(),
+        }
+    }
+}
+
+pub fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDef> {
+    match tab {
+        SettingsTab::Llm => vec![
+            FieldDef { label: "提供商标识", kind: FieldKind::Dropdown },
+            FieldDef { label: "模型名称", kind: FieldKind::Text },
+            FieldDef { label: "API Key", kind: FieldKind::Text },
+            FieldDef { label: "Base URL", kind: FieldKind::Text },
+        ],
+        SettingsTab::Search => vec![
+            FieldDef { label: "启用搜索", kind: FieldKind::Toggle },
+            FieldDef { label: "搜索 Key", kind: FieldKind::Text },
+        ],
+        SettingsTab::Finance => vec![
+            FieldDef { label: "金融数据源", kind: FieldKind::Dropdown },
+            FieldDef { label: "TuShare Token", kind: FieldKind::Text },
+        ],
+        SettingsTab::Theme => vec![
+            FieldDef { label: "预设主题", kind: FieldKind::Dropdown },
+        ],
+    }
+}
+
 pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
-    // Overlay: center box, height adapts to content
+    // Need area.height >= 10: inner = overlay_h-2, Layout needs 4 rows (3 fixed + 1 min)
+    if area.width < 2 || area.height < 10 {
+        return;
+    }
     let overlay_w = 64.min(area.width.saturating_sub(4));
     let overlay_h = 22.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(overlay_w)) / 2;
     let y = area.y + (area.height.saturating_sub(overlay_h)) / 2;
     let overlay_area = Rect::new(x, y, overlay_w, overlay_h);
 
-    // Dim background
-    let bg = Paragraph::new("")
-        .style(Style::default().bg(theme::BG))
-        .block(Block::default().style(Style::default().bg(theme::BG)));
-    frame.render_widget(bg, area);
+    // Dim background over full terminal area
+    frame.render_widget(Clear, area);
+    let bg_block = Block::default().style(Style::default().bg(theme::BG));
+    frame.render_widget(bg_block, area);
+
+    let dirty_mark = if state.settings_dirty { " *" } else { "" };
+    let title = format!("Settings{}", dirty_mark);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::CYAN))
         .style(Style::default().bg(theme::PANEL))
-        .title(theme::title_line("Settings", theme::CYAN));
+        .title(format!(" {title} "));
 
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
 
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+    let chunks = Layout::vertical([
+        Constraint::Length(1),  // tab bar
+        Constraint::Length(1),  // spacer
+        Constraint::Min(1),     // field list
+        Constraint::Length(1),  // footer
+    ])
+    .split(inner);
 
-    let content_area = chunks[0];
+    // ── Tab bar ──
+    render_tab_bar(frame, chunks[0], state);
 
-    let route_mode_idx = match state.gateway_mode.as_str() {
-        "quality-first" => 1,
-        "latency-first" => 2,
-        _ => 0, // cost-first (default)
+    // ── Field list ──
+    let fields = fields_for_tab(state.settings_tab);
+    render_field_list(frame, chunks[2], state, &fields);
+
+    // ── Footer ──
+    let hints = if state.settings_dirty_confirm {
+        vec![
+            Span::styled(
+                " ⚠ 有未保存修改 ",
+                Style::default().fg(theme::BG).bg(theme::YELLOW).add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(" 再按一次 Esc/s/q 放弃修改 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+            Span::styled(" 或 Ctrl+S 保存 ", Style::default().fg(theme::BG).bg(theme::GREEN)),
+        ]
+    } else if state.settings_saved_flash > 0 {
+        vec![Span::styled(
+            " ✓ 设置已保存 ",
+            Style::default().fg(theme::BG).bg(theme::GREEN).add_modifier(ratatui::style::Modifier::BOLD),
+        )]
+    } else if state.settings_editing {
+        vec![
+            Span::styled(" Enter 确认 ", Style::default().fg(theme::BG).bg(theme::GREEN)),
+            Span::styled(" Esc 取消 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+        ]
+    } else {
+        let dirty_hint = if state.settings_dirty {
+            vec![Span::styled(
+                " Ctrl+S 保存 ",
+                Style::default().fg(theme::BG).bg(theme::YELLOW),
+            )]
+        } else {
+            vec![]
+        };
+        let mut base = vec![
+            Span::styled(" ↑↓ 导航 ", Style::default().fg(theme::BG).bg(theme::CYAN)),
+            Span::styled(" Enter 编辑 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+            Span::styled(" Space 切换 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+        ];
+        base.extend(dirty_hint);
+        base.push(Span::styled(
+            " Esc/s 关闭 ",
+            Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+        ));
+        base
     };
 
-    let modes = ["cost-first", "quality-first", "latency-first"];
-    let mode_lines: Vec<String> = modes
+    let hint_line = Line::from(hints);
+    frame.render_widget(
+        Paragraph::new(hint_line).style(Style::default().bg(theme::PANEL)),
+        chunks[3],
+    );
+}
+
+fn render_tab_bar(frame: &mut Frame, area: Rect, state: &TuiAppState) {
+    let tabs = [SettingsTab::Llm, SettingsTab::Search, SettingsTab::Finance, SettingsTab::Theme];
+    let spans: Vec<Span> = tabs
         .iter()
         .enumerate()
-        .map(|(i, m)| {
-            let marker = if i == route_mode_idx { " ● " } else { " ○ " };
-            let desc = match *m {
-                "cost-first" => "成本优先 — 选择最便宜的可用模型",
-                "quality-first" => "质量优先 — 选择推理能力最强的模型",
-                "latency-first" => "延迟优先 — 选择响应最快的模型",
-                _ => "",
+        .flat_map(|(i, t)| {
+            let is_active = state.settings_tab == *t;
+            let style = if is_active {
+                Style::default().fg(theme::BG).bg(theme::CYAN)
+            } else {
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL)
             };
-            format!("{marker}{desc}")
+            let label = format!(" {} ", t.label());
+            if i > 0 {
+                vec![
+                    Span::styled(" ", Style::default().bg(theme::PANEL)),
+                    Span::styled(label, style),
+                ]
+            } else {
+                vec![Span::styled(label, style)]
+            }
         })
         .collect();
 
-    // ── Gateway status section ──
-    let gateway_section = if state.gateway_enabled {
-        let model_count = state.gateway_models.len();
-        let model_list = if state.gateway_models.is_empty() {
-            "  (未发现模型)".to_string()
-        } else {
-            state
-                .gateway_models
-                .iter()
-                .map(|m| format!("  • {m}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        format!(
-            "  Gateway: 已连接 · {model_count} 个模型\n  URL: {url}\n\n  ── 模型列表 ──\n{model_list}",
-            url = state.gateway_url,
-        )
-    } else {
-        "  Gateway: 未检测到\n\n  启动方式:\n    hermes --tui --model auto\n    hermes --tui --base-url http://localhost:9090/v1".to_string()
-    };
-
-    let shg_status = if state.shg_triggered {
-        "SHG: 上次请求触发 (已自动路由到强模型)"
-    } else {
-        "SHG: 待命中"
-    };
-
-    let route_decision = state
-        .last_route_decision
-        .as_deref()
-        .unwrap_or("暂无路由决策");
-
-    let text = format!(
-        "{gateway_section}\n\n  ── 路由模式 ──\n  {mode_0}\n  {mode_1}\n  {mode_2}\n\n  ── 状态 ──\n  {shg_status}\n  最近决策: {route_decision}\n\n  按 1/2/3 切换路由模式",
-        mode_0 = mode_lines[0],
-        mode_1 = mode_lines[1],
-        mode_2 = mode_lines[2],
-    );
-
-    let para = Paragraph::new(text)
-        .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(para, content_area);
-
-    // Footer hint
-    let hint = Line::from(vec![
-        Span::styled(
-            " 1/2/3 切换模式 ",
-            Style::default().fg(theme::BG).bg(theme::CYAN),
-        ),
-        Span::styled(
-            " Esc / s 关闭 ",
-            Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
-        ),
-    ]);
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().bg(theme::PANEL)),
-        chunks[1],
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme::PANEL)),
+        area,
+    );
+}
+
+fn render_field_list(frame: &mut Frame, area: Rect, state: &TuiAppState, fields: &[FieldDef]) {
+    let lines: Vec<Line> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let is_focused = i == state.settings_field_focus;
+            let label_style = if is_focused {
+                Style::default().fg(theme::CYAN).bg(theme::PANEL)
+            } else {
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL)
+            };
+
+            let focus_marker = if is_focused { "▶ " } else { "  " };
+
+            let value_text = if state.settings_editing && is_focused {
+                state.settings_edit_buffer.clone()
+            } else {
+                f.rendered_value(state)
+            };
+
+            let value_style = if state.settings_editing && is_focused {
+                Style::default().fg(theme::YELLOW).bg(theme::PANEL)
+            } else {
+                match f.kind {
+                    FieldKind::Toggle => {
+                        if value_text.contains('●') {
+                            Style::default().fg(theme::GREEN).bg(theme::PANEL)
+                        } else {
+                            Style::default().fg(theme::SUBTLE).bg(theme::PANEL)
+                        }
+                    }
+                    FieldKind::Dropdown => Style::default().fg(theme::TEXT).bg(theme::PANEL),
+                    FieldKind::Text => Style::default().fg(theme::TEXT).bg(theme::PANEL),
+                }
+            };
+
+            let kind_marker = match f.kind {
+                FieldKind::Dropdown => " ▼",
+                FieldKind::Toggle => "",
+                FieldKind::Text => "",
+            };
+
+            let cursor = if state.settings_editing && is_focused { "│" } else { "" };
+
+            Line::from(vec![
+                Span::styled(focus_marker, label_style),
+                Span::styled(format!("{}: ", f.label), label_style),
+                Span::styled(format!("{value_text}{kind_marker}{cursor}"), value_style),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme::PANEL)),
+        area,
     );
 }
