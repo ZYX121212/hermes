@@ -1,9 +1,172 @@
 // crates/tui/src/theme.rs
-// Shared visual language for the terminal UI.
+// Theme system: struct, presets, TOML loading, widget builders.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
+use serde::Deserialize;
+
+// ── Theme struct ──
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Theme {
+    #[serde(default = "default_colors")]
+    pub colors: ThemeColors,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThemeColors {
+    pub bg: String,
+    pub panel: String,
+    pub panel_alt: String,
+    pub border: String,
+    pub border_focused: String,
+    pub text: String,
+    pub muted: String,
+    pub subtle: String,
+    pub cyan: String,
+    pub blue: String,
+    pub green: String,
+    pub yellow: String,
+    pub red: String,
+    pub magenta: String,
+}
+
+fn default_colors() -> ThemeColors {
+    ThemeColors {
+        bg: "#0b1220".into(),
+        panel: "#0f172a".into(),
+        panel_alt: "#111f30".into(),
+        border: "#334155".into(),
+        border_focused: "#38bdf8".into(),
+        text: "#e2e8f0".into(),
+        muted: "#94a3b8".into(),
+        subtle: "#64748b".into(),
+        cyan: "#22d3ee".into(),
+        blue: "#60a5fa".into(),
+        green: "#34d399".into(),
+        yellow: "#fbbf24".into(),
+        red: "#f87171".into(),
+        magenta: "#d8b4fe".into(),
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self { colors: default_colors() }
+    }
+}
+
+impl Theme {
+    pub fn load() -> Self {
+        let path = std::env::var("HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default()
+            .join(".hermess")
+            .join("theme.toml");
+        if path.exists() {
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(t) = toml::from_str::<Theme>(&raw) {
+                    tracing::info!(path = %path.display(), "Loaded theme");
+                    return t;
+                }
+            }
+        }
+        if let Ok(name) = std::env::var("HERMESS_THEME") {
+            return Self::preset(&name);
+        }
+        Self::preset("tokyo-night")
+    }
+
+    pub fn preset(name: &str) -> Self {
+        match name {
+            "dracula" => Self {
+                colors: ThemeColors {
+                    bg: "#282a36".into(), panel: "#2c2f3e".into(),
+                    panel_alt: "#353849".into(), border: "#6272a4".into(),
+                    border_focused: "#bd93f9".into(), text: "#f8f8f2".into(),
+                    muted: "#a0a0b0".into(), subtle: "#6272a4".into(),
+                    cyan: "#8be9fd".into(), blue: "#6272a4".into(),
+                    green: "#50fa7b".into(), yellow: "#f1fa8c".into(),
+                    red: "#ff5555".into(), magenta: "#ff79c6".into(),
+                }
+            },
+            "solarized-dark" => Self {
+                colors: ThemeColors {
+                    bg: "#002b36".into(), panel: "#073642".into(),
+                    panel_alt: "#0a4b57".into(), border: "#586e75".into(),
+                    border_focused: "#268bd2".into(), text: "#839496".into(),
+                    muted: "#586e75".into(), subtle: "#657b83".into(),
+                    cyan: "#2aa198".into(), blue: "#268bd2".into(),
+                    green: "#859900".into(), yellow: "#b58900".into(),
+                    red: "#dc322f".into(), magenta: "#d33682".into(),
+                }
+            },
+            "gruvbox" => Self {
+                colors: ThemeColors {
+                    bg: "#282828".into(), panel: "#32302f".into(),
+                    panel_alt: "#3c3836".into(), border: "#504945".into(),
+                    border_focused: "#83a598".into(), text: "#ebdbb2".into(),
+                    muted: "#a89984".into(), subtle: "#665c54".into(),
+                    cyan: "#83a598".into(), blue: "#458588".into(),
+                    green: "#b8bb26".into(), yellow: "#fabd2f".into(),
+                    red: "#fb4934".into(), magenta: "#d3869b".into(),
+                }
+            },
+            _ => Self::default(),
+        }
+    }
+
+    pub fn preset_names() -> &'static [&'static str] {
+        &["tokyo-night", "dracula", "solarized-dark", "gruvbox"]
+    }
+
+    fn parse(hex: &str) -> Color {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return Color::Rgb(255, 255, 255);
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
+        Color::Rgb(r, g, b)
+    }
+
+    pub fn bg(&self) -> Color { Self::parse(&self.colors.bg) }
+    pub fn panel(&self) -> Color { Self::parse(&self.colors.panel) }
+    pub fn panel_alt(&self) -> Color { Self::parse(&self.colors.panel_alt) }
+    pub fn border(&self) -> Color { Self::parse(&self.colors.border) }
+    pub fn border_focused(&self) -> Color { Self::parse(&self.colors.border_focused) }
+    pub fn text(&self) -> Color { Self::parse(&self.colors.text) }
+    pub fn muted(&self) -> Color { Self::parse(&self.colors.muted) }
+    pub fn subtle(&self) -> Color { Self::parse(&self.colors.subtle) }
+    pub fn cyan(&self) -> Color { Self::parse(&self.colors.cyan) }
+    pub fn blue(&self) -> Color { Self::parse(&self.colors.blue) }
+    pub fn green(&self) -> Color { Self::parse(&self.colors.green) }
+    pub fn yellow(&self) -> Color { Self::parse(&self.colors.yellow) }
+    pub fn red(&self) -> Color { Self::parse(&self.colors.red) }
+    pub fn magenta(&self) -> Color { Self::parse(&self.colors.magenta) }
+}
+
+// ── Global theme ──
+
+use std::sync::OnceLock;
+static CURRENT_THEME: OnceLock<Theme> = OnceLock::new();
+
+pub fn init_theme(theme: Theme) {
+    let _ = CURRENT_THEME.set(theme);
+}
+
+pub fn current_theme() -> &'static Theme {
+    CURRENT_THEME.get().unwrap_or(&*THEME_FALLBACK)
+}
+
+static THEME_FALLBACK: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(|| Theme {
+    colors: default_colors(),
+});
+
+// ── Backward-compatible color constants (match default tokyo-night theme) ──
 
 pub const BG: Color = Color::Rgb(11, 18, 32);
 pub const PANEL: Color = Color::Rgb(15, 23, 42);
@@ -20,7 +183,9 @@ pub const YELLOW: Color = Color::Rgb(251, 191, 36);
 pub const RED: Color = Color::Rgb(248, 113, 113);
 pub const MAGENTA: Color = Color::Rgb(216, 180, 254);
 
-pub fn panel_block<'a>(title: impl Into<String>, accent: Color, focused: bool) -> Block<'a> {
+// ── Widget builders (unchanged from existing code) ──
+
+pub fn panel_block(title: impl Into<String>, accent: Color, focused: bool) -> Block<'static> {
     let border = if focused { BORDER_FOCUSED } else { BORDER };
     Block::default()
         .borders(Borders::ALL)
@@ -33,7 +198,7 @@ pub fn panel_block<'a>(title: impl Into<String>, accent: Color, focused: bool) -
 pub fn title_line(title: impl Into<String>, accent: Color) -> Line<'static> {
     Line::from(vec![
         Span::styled(" ", Style::default().bg(PANEL)),
-        Span::styled("▌", Style::default().fg(accent).bg(PANEL)),
+        Span::styled("\u{258c}", Style::default().fg(accent).bg(PANEL)),
         Span::styled(
             format!(" {} ", title.into()),
             Style::default()
