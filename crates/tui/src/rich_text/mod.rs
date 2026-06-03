@@ -85,25 +85,105 @@ pub fn render_markdown_line(text: &str, base_style: Style) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Render multiple lines, detecting code block fences.
-/// Lines between ``` fences are rendered in MUTED style.
+/// Render multiple lines with full markdown support:
+/// - Code blocks with optional language tag -> syntax highlighting
+/// - Tables -> detected and rendered as formatted text
+/// - LaTeX $...$ -> Unicode conversion
+/// - Legacy: **bold**, *italic*, `inline code`
 pub fn render_markdown_lines(text: &str, base_style: Style) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
     let mut in_code_block = false;
+    let mut code_lang = String::new();
+    let mut code_buffer = String::new();
+    let mut in_table = false;
+    let mut table_lines: Vec<String> = Vec::new();
 
     for raw_line in text.lines() {
+        // ── Table detection ──
+        if !in_code_block {
+            if table::is_table_header(raw_line) {
+                in_table = true;
+                table_lines.clear();
+                table_lines.push(raw_line.to_string());
+                continue;
+            }
+            if in_table && table::is_table_separator(raw_line) {
+                table_lines.push(raw_line.to_string());
+                continue;
+            }
+            if in_table {
+                if !table::is_table_header(raw_line) && !raw_line.trim().is_empty() {
+                    table_lines.push(raw_line.to_string());
+                    continue;
+                } else {
+                    // End of table — render as formatted lines
+                    lines.push(Line::from(Span::styled(
+                        "┌─ Table ─┐",
+                        Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                    )));
+                    for tl in &table_lines {
+                        let rendered = render_markdown_line(tl, base_style);
+                        lines.push(rendered);
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "└─────────┘",
+                        Style::default().fg(theme::MUTED).bg(theme::PANEL),
+                    )));
+                    table_lines.clear();
+                    in_table = false;
+                    // Process current line normally below
+                }
+            }
+        }
+
+        // ── Code fence with optional language ──
         if raw_line.trim().starts_with("```") {
-            in_code_block = !in_code_block;
+            if in_code_block {
+                // End of code block — render highlighted
+                let lang = code_lang.trim().to_string();
+                let highlighted = highlight::highlight_code(&lang, &code_buffer, theme::PANEL);
+                lines.extend(highlighted);
+                code_buffer.clear();
+                code_lang.clear();
+                in_code_block = false;
+            } else {
+                // Start of code block
+                code_lang = raw_line.trim().trim_start_matches('`').trim().to_string();
+                in_code_block = true;
+            }
             continue;
         }
 
-        let style = if in_code_block {
-            Style::default().fg(theme::MUTED).bg(theme::PANEL)
+        if in_code_block {
+            if !code_buffer.is_empty() {
+                code_buffer.push('\n');
+            }
+            code_buffer.push_str(raw_line);
+            continue;
+        }
+
+        // ── Inline LaTeX conversion ──
+        let processed = if latex::has_latex(raw_line) {
+            latex::render_latex_inline(raw_line)
         } else {
-            base_style
+            raw_line.to_string()
         };
 
-        lines.push(render_markdown_line(raw_line, style));
+        lines.push(render_markdown_line(&processed, base_style));
+    }
+
+    // Flush remaining code block
+    if in_code_block && !code_buffer.is_empty() {
+        let lang = code_lang.trim().to_string();
+        let highlighted = highlight::highlight_code(&lang, &code_buffer, theme::PANEL);
+        lines.extend(highlighted);
+    }
+
+    // Flush remaining table
+    if in_table && !table_lines.is_empty() {
+        for tl in &table_lines {
+            lines.push(render_markdown_line(tl, base_style));
+        }
     }
 
     lines

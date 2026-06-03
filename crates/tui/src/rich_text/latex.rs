@@ -73,33 +73,42 @@ fn latex_map() -> &'static HashMap<&'static str, &'static str> {
 /// Convert inline LaTeX math ($...$) to Unicode.
 pub fn render_latex_inline(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_math = false;
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
 
-    while let Some(&ch) = chars.peek() {
-        if ch == '$' {
-            chars.next();
-            in_math = !in_math;
-            continue;
-        }
-        if ch == '\\' {
-            chars.next();
-            let mut cmd = String::from("\\");
-            for c in chars.by_ref() {
-                if c.is_alphabetic() {
-                    cmd.push(c);
-                } else {
-                    result.push_str(&convert_math(&cmd));
-                    result.push(c);
-                    break;
-                }
+    while i < len {
+        match chars[i] {
+            '$' => {
+                i += 1;
             }
-            if cmd.len() > 1 && cmd.chars().all(|c| c == '\\' || c.is_alphabetic()) {
+            '\\' => {
+                i += 1;
+                let start = i - 1;
+                // Consume command name (alphabetic chars)
+                while i < len && chars[i].is_alphabetic() {
+                    i += 1;
+                }
+                // Consume brace groups if present (e.g. \frac{a}{b})
+                while i < len && chars[i] == '{' {
+                    let mut depth = 1;
+                    i += 1;
+                    while i < len && depth > 0 {
+                        match chars[i] {
+                            '{' => depth += 1,
+                            '}' => depth -= 1,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+                let cmd: String = chars[start..i].iter().collect();
                 result.push_str(&convert_math(&cmd));
             }
-        } else {
-            result.push(ch);
-            chars.next();
+            _ => {
+                result.push(chars[i]);
+                i += 1;
+            }
         }
     }
 

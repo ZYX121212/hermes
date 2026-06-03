@@ -80,7 +80,7 @@ fn split_row(line: &str) -> Option<Vec<String>> {
         return None;
     }
     let inner = &line[1..line.len() - 1];
-    let cells: Vec<String> = inner.split('|').map(|c| c.to_string()).collect();
+    let cells: Vec<String> = inner.split('|').map(|c| c.trim().to_string()).collect();
     if cells.is_empty() {
         return None;
     }
