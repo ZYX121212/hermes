@@ -1,6 +1,8 @@
 [package]
 name = "tui"
 version = "0.1.0"
+description = "Rataui-based terminal UI with 12 panels and real-time event display"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
@@ -13,6 +15,11 @@ evolution = { path = "../evolution" }
 anyhow.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+llm = { path = "../llm" }
+syntect = { version = "5", default-features = false, features = ["parsing", "regex-onig"] }
+toml = "0.8"
 
 [dev-dependencies]
 memory = { path = "../memory" }
