@@ -1,6 +1,10 @@
 // crates/tui/src/rich_text.rs
 // Lightweight markdown-to-ratatui-Span renderer for single lines.
 
+pub mod highlight;
+pub mod latex;
+pub mod table;
+
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
