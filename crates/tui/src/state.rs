@@ -148,6 +148,7 @@ pub enum SettingsTab {
     Llm,
     Search,
     Finance,
+    Theme,
 }
 
 impl SettingsTab {
@@ -155,15 +156,17 @@ impl SettingsTab {
         match self {
             SettingsTab::Llm => SettingsTab::Search,
             SettingsTab::Search => SettingsTab::Finance,
-            SettingsTab::Finance => SettingsTab::Llm,
+            SettingsTab::Finance => SettingsTab::Theme,
+            SettingsTab::Theme => SettingsTab::Llm,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            SettingsTab::Llm => SettingsTab::Finance,
+            SettingsTab::Llm => SettingsTab::Theme,
             SettingsTab::Search => SettingsTab::Llm,
             SettingsTab::Finance => SettingsTab::Search,
+            SettingsTab::Theme => SettingsTab::Finance,
         }
     }
 
@@ -172,8 +175,15 @@ impl SettingsTab {
             SettingsTab::Llm => "LLM",
             SettingsTab::Search => "搜索",
             SettingsTab::Finance => "金融",
+            SettingsTab::Theme => "主题",
         }
     }
+}
+
+/// A session tab shown in the tab bar.
+#[derive(Debug, Clone)]
+pub struct SessionTab {
+    pub name: String,
 }
 
 /// Slash-command result popup content.
@@ -375,6 +385,13 @@ pub struct TuiAppState {
     pub settings_saved_flash: u8, // frames remaining for "已保存" flash (0 = hidden)
     pub settings_dirty_confirm: bool, // true when Esc/s pressed once while dirty
     pub user_settings: UserSettings,
+
+    // Theme
+    pub theme_preset: String, // "tokyo-night", "dracula", etc.
+
+    // Session tabs
+    pub session_tabs: Vec<SessionTab>,
+    pub active_tab_index: usize,
 }
 
 impl TuiAppState {
@@ -451,6 +468,9 @@ impl TuiAppState {
             slash_command_buffer: String::new(),
             slash_command_cursor: 0,
             slash_command_popup: None,
+            theme_preset: "tokyo-night".into(),
+            session_tabs: vec![SessionTab { name: "会话1".into() }],
+            active_tab_index: 0,
         }
     }
 }

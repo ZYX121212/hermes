@@ -12,3 +12,4 @@ pub mod settings;
 pub mod context_ref;
 pub mod kanban;
 pub mod slash_command;
+pub mod tab_bar;

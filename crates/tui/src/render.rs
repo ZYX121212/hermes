@@ -40,6 +40,16 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
 
     let header_area = v_chunks[0];
     let main_area = v_chunks[1];
+
+    // ── Render tab bar between header and main area (only when multiple tabs) ──
+    if state.session_tabs.len() > 1 {
+        panels::tab_bar::render_tab_bar(frame, ratatui::layout::Rect {
+            x: main_area.x,
+            y: main_area.y.saturating_sub(1),
+            width: main_area.width,
+            height: 1,
+        }, state);
+    }
     let footer_area = if needs_mini_log {
         v_chunks[3]
     } else {
