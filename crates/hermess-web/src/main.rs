@@ -147,6 +147,17 @@ async fn main() -> anyhow::Result<()> {
         cfg.feishu.app_secret.clone(),
     );
 
+    // ── 飞书 Wiki/Docs/Drive Tools ──────────────────────────
+    tools.register(Arc::new(
+        hermess_web::feishu::tools::FeishuWikiTool::new(Arc::clone(&feishu_client)),
+    ));
+    tools.register(Arc::new(
+        hermess_web::feishu::tools::FeishuDocsTool::new(Arc::clone(&feishu_client)),
+    ));
+    tools.register(Arc::new(
+        hermess_web::feishu::tools::FeishuDriveTool::new(Arc::clone(&feishu_client)),
+    ));
+
     // ── 会话管理器 ─────────────────────────────────────────
     let sessions = Arc::new(SessionManager::new(
         Arc::clone(&evolution),

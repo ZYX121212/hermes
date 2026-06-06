@@ -38,6 +38,6 @@ uuid.workspace = true
 chrono.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["multipart"] }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
