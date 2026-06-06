@@ -1,11 +1,12 @@
-// axum HTTP 服务器 — 企业微信回调处理
+// axum HTTP 服务器 — 飞书 Bot + 通用 Chat API
+use crate::feishu::client::FeishuClient;
 use crate::session::SessionManager;
-use crate::wechat::{client::WeChatClient, crypto, msg};
 use agent_core::context::Context;
 use agent_core::AgentEvent;
 use agent_core::HermesAgent;
+use axum::middleware::{self, Next};
 use axum::{
-    extract::{Query, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -13,24 +14,29 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tower_http::{
+    cors::CorsLayer,
+    limit::RequestBodyLimitLayer,
+    request_id::{MakeRequestId, RequestId, SetRequestIdLayer},
+};
+use uuid::Uuid;
+
+#[derive(Clone, Default)]
+struct MakeRequestUuid;
+
+impl MakeRequestId for MakeRequestUuid {
+    fn make_request_id<B>(&mut self, _request: &axum::http::Request<B>) -> Option<RequestId> {
+        let id = Uuid::new_v4().to_string().parse().ok()?;
+        Some(RequestId::new(id))
+    }
+}
 
 // ── App State ────────────────────────────────────────────────
 
 pub struct AppState {
-    pub wx_config: crate::wechat_config::WeChatConfig,
-    pub wx_client: Arc<WeChatClient>,
+    pub feishu_client: Arc<FeishuClient>,
     pub sessions: Arc<SessionManager>,
-}
-
-// ── Callback Query ───────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct CallbackQuery {
-    msg_signature: String,
-    timestamp: String,
-    nonce: String,
-    /// URL 验证时携带
-    echostr: Option<String>,
+    pub api_key: String,
 }
 
 // ── Chat API types ──────────────────────────────────────────
@@ -50,125 +56,76 @@ struct ChatResponse {
 // ── Router ───────────────────────────────────────────────────
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let has_auth = !state.api_key.is_empty();
+    if has_auth {
+        tracing::info!("API key authentication enabled for /chat endpoint");
+    } else {
+        tracing::warn!("No api_key configured — /chat endpoint is OPEN to all requests");
+    }
+    let auth_layer = middleware::from_fn_with_state(state.clone(), auth_middleware);
+
     Router::new()
-        .route("/wechat/callback", get(verify_url).post(handle_message))
         .route("/chat", post(handle_chat))
         .route("/health", get(health))
+        .layer((
+            SetRequestIdLayer::x_request_id(MakeRequestUuid),
+            RequestBodyLimitLayer::new(4 * 1024 * 1024),
+            CorsLayer::permissive(),
+        ))
+        .layer(auth_layer)
         .with_state(state)
+}
+
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let path = req.uri().path();
+    if path == "/health" {
+        return Ok(next.run(req).await);
+    }
+    if state.api_key.is_empty() {
+        return Ok(next.run(req).await);
+    }
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        if token == state.api_key {
+            return Ok(next.run(req).await);
+        }
+    }
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 // ── Handlers ─────────────────────────────────────────────────
 
-/// GET /wechat/callback — URL 验证
-async fn verify_url(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<CallbackQuery>,
-) -> Result<String, StatusCode> {
-    let echostr = query.echostr.as_deref().unwrap_or("");
-
-    if !crypto::verify_signature(
-        &state.wx_config.token,
-        &query.timestamp,
-        &query.nonce,
-        echostr,
-        &query.msg_signature,
-    ) {
-        tracing::warn!("URL verification signature mismatch");
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    match crypto::decrypt_msg(echostr, &state.wx_config.encoding_aes_key) {
-        Ok(plain) => {
-            tracing::info!("URL verification succeeded");
-            Ok(plain)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "URL verification decryption failed");
-            Err(StatusCode::BAD_REQUEST)
-        }
-    }
-}
-
-/// POST /wechat/callback — 接收消息
-async fn handle_message(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<CallbackQuery>,
-    body: String,
-) -> Response {
-    // 尝试使用加密/明文两种方式解析
-    let inner_xml = if !body.contains("<Encrypt>") {
-        body.clone()
-    } else {
-        let encrypted = match msg::parse_encrypted_xml(&body) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to parse encrypted XML");
-                return (StatusCode::BAD_REQUEST, "invalid xml").into_response();
-            }
-        };
-
-        if !crypto::verify_signature(
-            &state.wx_config.token,
-            &query.timestamp,
-            &query.nonce,
-            &encrypted.encrypt,
-            &query.msg_signature,
-        ) {
-            tracing::warn!("message signature mismatch");
-            return (StatusCode::FORBIDDEN, "signature mismatch").into_response();
-        }
-
-        match crypto::decrypt_msg(&encrypted.encrypt, &state.wx_config.encoding_aes_key) {
-            Ok(xml) => xml,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to decrypt message");
-                return (StatusCode::BAD_REQUEST, "decrypt failed").into_response();
-            }
-        }
-    };
-
-    // 解析内层消息
-    let inner = match msg::parse_message(&inner_xml) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to parse inner message");
-            return (StatusCode::OK, "ok").into_response();
-        }
-    };
-
-    let user_id = inner.from_user_name.clone();
-    let content = inner.content.clone();
-
-    tracing::info!(%user_id, %content, "received wechat message");
-
-    let (reply, _errors) = run_agent_once(&state, &user_id, &content).await;
-
-    match state.wx_client.send_text(&user_id, &reply).await {
-        Ok(()) => tracing::info!(%user_id, len = reply.len(), "reply sent"),
-        Err(e) => tracing::error!(error = %e, %user_id, "failed to send reply"),
-    }
-
-    (StatusCode::OK, "ok").into_response()
-}
-
 /// POST /chat — 通用 HTTP 对话接口
-///
-/// 请求: `{"user_id": "alice", "message": "帮我查天气"}`
-/// 响应: `{"reply": "...", "errors": []}`
 async fn handle_chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {
     tracing::info!(user_id = %req.user_id, msg = %req.message, "chat request");
 
-    let (reply, errors) = run_agent_once(&state, &req.user_id, &req.message).await;
+    let (reply, errors) = run_agent_once(&state.sessions, &req.user_id, &req.message).await;
 
     Json(ChatResponse { reply, errors })
 }
 
-/// 运行一次 agent 循环，返回 (reply, errors)
-async fn run_agent_once(state: &AppState, user_id: &str, content: &str) -> (String, Vec<String>) {
-    let (agent_arc, mut event_rx) = state.sessions.get_or_create(user_id);
+async fn health() -> &'static str {
+    "ok"
+}
+
+/// 运行一次 agent 循环（Bot 和 HTTP 端点共用）
+pub(crate) async fn run_agent_once(
+    sessions: &SessionManager,
+    user_id: &str,
+    content: &str,
+) -> (String, Vec<String>) {
+    let (agent_arc, mut event_rx) = sessions.get_or_create(user_id);
     let agent_guard = agent_arc.lock().await;
     let ctx = Context::new(Some(content.to_string()));
 
@@ -209,14 +166,10 @@ async fn run_agent_once(state: &AppState, user_id: &str, content: &str) -> (Stri
     match handle.await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            let msg = format!("Agent 执行错误: {:#}", e);
-            tracing::error!(%user_id, %msg);
-            errors.push(msg);
+            errors.push(format!("Agent 执行错误: {:#}", e));
         }
         Err(e) => {
-            let msg = format!("Agent panic: {:#}", e);
-            tracing::error!(%user_id, %msg);
-            errors.push(msg);
+            errors.push(format!("Agent panic: {:#}", e));
         }
     }
 
@@ -229,9 +182,4 @@ async fn run_agent_once(state: &AppState, user_id: &str, content: &str) -> (Stri
     }
 
     (reply, errors)
-}
-
-/// GET /health — 健康检查
-async fn health() -> &'static str {
-    "ok"
 }

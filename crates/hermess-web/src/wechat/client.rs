@@ -48,24 +48,25 @@ impl WeChatClient {
         {
             let cache = self.token_cache.read().await;
             // 提前 5 分钟刷新
-            if !cache.token.is_empty() && cache.expires_at > Instant::now() + std::time::Duration::from_secs(300) {
+            if !cache.token.is_empty()
+                && cache.expires_at > Instant::now() + std::time::Duration::from_secs(300)
+            {
                 return Ok(cache.token.clone());
             }
         }
 
         let mut cache = self.token_cache.write().await;
         // 双重检查
-        if !cache.token.is_empty() && cache.expires_at > Instant::now() + std::time::Duration::from_secs(300) {
+        if !cache.token.is_empty()
+            && cache.expires_at > Instant::now() + std::time::Duration::from_secs(300)
+        {
             return Ok(cache.token.clone());
         }
 
         let resp = self
             .http
             .get("https://qyapi.weixin.qq.com/cgi-bin/gettoken")
-            .query(&[
-                ("corpid", &self.corp_id),
-                ("corpsecret", &self.secret),
-            ])
+            .query(&[("corpid", &self.corp_id), ("corpsecret", &self.secret)])
             .send()
             .await
             .context("failed to fetch access_token")?;
@@ -78,7 +79,10 @@ impl WeChatClient {
             expires_in: Option<u64>,
         }
 
-        let token_resp: TokenResp = resp.json().await.context("failed to parse token response")?;
+        let token_resp: TokenResp = resp
+            .json()
+            .await
+            .context("failed to parse token response")?;
         if token_resp.errcode != 0 {
             bail!(
                 "get access_token failed: errcode={} errmsg={:?}",

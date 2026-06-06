@@ -1,27 +1,35 @@
-// hermess-webd — 企业微信接入的 Hermes Agent 守护进程
+// hermess-webd — 飞书接入的 Hermes Agent 守护进程
 use std::str::FromStr;
 use std::sync::Arc;
 
 use clap::Parser;
+use hermess_web::feishu::bot::FeishuBot;
+use hermess_web::feishu::client::FeishuClient;
 use hermess_web::session::SessionManager;
-use hermess_web::wechat::client::WeChatClient;
 
-/// Hermes Web Daemon — 通过企业微信控制 Hermes Agent
 #[derive(Parser)]
 #[command(name = "hermess-webd")]
 struct Cli {
-    #[arg(short, long, default_value = "config/wechat.toml")]
+    #[arg(short, long, default_value = "config/feishu.toml")]
     config: String,
+}
+
+fn init_tracing() {
+    use std::env;
+    let use_json = env::var("LOG_FORMAT").map(|v| v == "json").unwrap_or(false);
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    if use_json {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    init_tracing();
 
     let cli = Cli::parse();
     let cfg = hermess_web::WebAppConfig::from_file(&cli.config)?;
@@ -101,6 +109,18 @@ async fn main() -> anyhow::Result<()> {
         endpoint: cfg.search.endpoint.clone(),
     })));
 
+    let finance_provider = hermess_finance::providers::defaults::build_finance_provider(
+        hermess_finance::providers::defaults::FinanceProviderOptions {
+            provider: std::env::var("HERMESS_FINANCE_PROVIDER").ok(),
+            ftshare_url: std::env::var("HERMESS_FINANCE_URL").ok(),
+            tushare_token: std::env::var("HERMESS_TUSHARE_TOKEN").ok(),
+            allow_disable: true,
+        },
+    );
+    tools.register(Arc::new(hermess_finance::tool::FinancialTool::new(
+        finance_provider,
+    )));
+
     let evolution = Arc::new(
         evolution::EvolutionEngine::load_from_file(
             ".hermes_web_evolution.json",
@@ -115,16 +135,16 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!(error = %e, "Failed to load evolution state, starting fresh");
             }
             evolution::EvolutionEngine::new(cfg.learning_rate, Arc::clone(&memory))
-        }),
+        })
+        .with_auto_save(".hermes_web_evolution.json"),
     );
 
     let evolution_handle = Arc::clone(&evolution);
 
-    // ── 微信 API 客户端 ────────────────────────────────────
-    let wx_client = WeChatClient::new(
-        cfg.wechat.corp_id.clone(),
-        cfg.wechat.agent_id.clone(),
-        cfg.wechat.secret.clone(),
+    // ── 飞书 API 客户端 ────────────────────────────────────
+    let feishu_client = FeishuClient::new(
+        cfg.feishu.app_id.clone(),
+        cfg.feishu.app_secret.clone(),
     );
 
     // ── 会话管理器 ─────────────────────────────────────────
@@ -137,11 +157,20 @@ async fn main() -> anyhow::Result<()> {
     ));
     sessions.clone().start_cleanup();
 
+    // ── 启动飞书 Bot（WebSocket 长连接）───────────────────
+    let bot = FeishuBot::new(Arc::clone(&feishu_client), Arc::clone(&sessions));
+    tokio::spawn(async move { bot.run().await });
+
     // ── HTTP 服务器 ────────────────────────────────────────
+    let api_key = if cfg.api_key.is_empty() {
+        std::env::var("HERMESS_API_KEY").unwrap_or_default()
+    } else {
+        cfg.api_key.clone()
+    };
     let state = Arc::new(hermess_web::server::AppState {
-        wx_config: cfg.wechat.clone(),
-        wx_client,
+        feishu_client,
         sessions,
+        api_key,
     });
 
     let router = hermess_web::server::build_router(state);
@@ -150,7 +179,6 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("hermess-webd listening on http://{}", addr);
 
-    // 优雅关闭
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             tokio::signal::ctrl_c().await.ok();
@@ -158,7 +186,6 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-    // ── 保存进化状态 ──────────────────────────────────────
     if let Err(e) = evolution_handle.save_to_file(".hermes_web_evolution.json") {
         tracing::warn!(error = %e, "Failed to save evolution state");
     }

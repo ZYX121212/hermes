@@ -1,7 +1,9 @@
 // 企业微信回调消息加解密
 // 参考: https://developer.work.weixin.qq.com/document/path/90968
 
-use aes::cipher::{block_padding::Pkcs7, generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::cipher::{
+    block_padding::Pkcs7, generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyIvInit,
+};
 use anyhow::{bail, Context as _};
 use base64::Engine;
 use rand::Rng;
@@ -48,8 +50,8 @@ pub fn decrypt_msg(encrypted: &str, encoding_aes_key: &str) -> anyhow::Result<St
         bail!("decrypted payload too short");
     }
 
-    let msg_len = u32::from_be_bytes([decrypted[16], decrypted[17], decrypted[18], decrypted[19]])
-        as usize;
+    let msg_len =
+        u32::from_be_bytes([decrypted[16], decrypted[17], decrypted[18], decrypted[19]]) as usize;
 
     if 20 + msg_len > decrypted.len() {
         bail!("invalid message length in decrypted payload");
@@ -62,11 +64,7 @@ pub fn decrypt_msg(encrypted: &str, encoding_aes_key: &str) -> anyhow::Result<St
 }
 
 /// 加密回复消息
-pub fn encrypt_msg(
-    plain: &str,
-    encoding_aes_key: &str,
-    corp_id: &str,
-) -> anyhow::Result<String> {
+pub fn encrypt_msg(plain: &str, encoding_aes_key: &str, corp_id: &str) -> anyhow::Result<String> {
     let key = decode_aes_key(encoding_aes_key)?;
 
     let mut rng = rand::thread_rng();
@@ -99,12 +97,7 @@ pub fn encrypt_msg(
 }
 
 /// 生成回调回复的签名
-pub fn sign_reply(
-    token: &str,
-    timestamp: &str,
-    nonce: &str,
-    encrypted: &str,
-) -> String {
+pub fn sign_reply(token: &str, timestamp: &str, nonce: &str, encrypted: &str) -> String {
     let mut parts = [token, timestamp, nonce, encrypted];
     parts.sort();
     let combined = parts.join("");

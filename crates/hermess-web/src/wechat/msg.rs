@@ -48,8 +48,7 @@ pub fn parse_encrypted_xml(xml_str: &str) -> anyhow::Result<EncryptedMessage> {
 
 /// 解密并解析内层消息
 pub fn parse_message(xml_str: &str) -> anyhow::Result<InnerMessage> {
-    let msg: InnerMessage =
-        from_str(xml_str).context("failed to parse inner XML message")?;
+    let msg: InnerMessage = from_str(xml_str).context("failed to parse inner XML message")?;
 
     // 只处理 text 类型消息
     if msg.msg_type != "text" {

@@ -66,7 +66,10 @@ impl SessionManager {
     pub fn get_or_create(
         &self,
         user_id: &str,
-    ) -> (Arc<Mutex<SmallHermesAgent>>, mpsc::UnboundedReceiver<AgentEvent>) {
+    ) -> (
+        Arc<Mutex<SmallHermesAgent>>,
+        mpsc::UnboundedReceiver<AgentEvent>,
+    ) {
         if let Some(entry) = self.sessions.get(user_id) {
             *entry.last_active.lock() = Instant::now();
             // 给已有 agent 换一个新的 event channel
@@ -93,13 +96,19 @@ impl SessionManager {
         .with_streaming(true);
         planner.set_tools(self.tools.describe_all());
 
+        let subagent_runner = Arc::new(hermess_agent::SubAgentRunnerImpl::new(
+            Arc::clone(&self.llm) as Arc<dyn llm::LlmAdapter>,
+            Arc::clone(&self.evolution),
+            Arc::clone(&self.tools),
+            Some(event_tx.clone()),
+        ));
         let mut scheduler =
-            scheduler::Scheduler::new(Arc::clone(&self.tools), self.max_concurrency);
+            scheduler::Scheduler::new(Arc::clone(&self.tools), self.max_concurrency)
+                .with_subagent_runner(subagent_runner);
         scheduler.set_event_sender(event_tx.clone());
 
-        let reflector = reflector::Reflector::new(
-            Arc::clone(&self.llm) as Arc<dyn llm::LlmAdapter>,
-        );
+        let reflector =
+            reflector::Reflector::new(Arc::clone(&self.llm) as Arc<dyn llm::LlmAdapter>);
 
         let agent = SmallHermesAgent {
             planner,
@@ -115,6 +124,8 @@ impl SessionManager {
             compress_threshold: 20,
             compress_keep_ratio: 0.5,
             conversation_history: Vec::new(),
+            recent_insights: Vec::new(),
+            distiller: hermess_agent::SkillDistiller::new(),
             tui_input: None,
         };
 
