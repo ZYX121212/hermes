@@ -6,12 +6,20 @@ use clap::Parser;
 use hermess_web::feishu::bot::FeishuBot;
 use hermess_web::feishu::client::FeishuClient;
 use hermess_web::session::SessionManager;
+use tokio::sync::RwLock;
 
 #[derive(Parser)]
 #[command(name = "hermess-webd")]
 struct Cli {
     #[arg(short, long, default_value = "config/feishu.toml")]
     config: String,
+
+    /// 飞书应用 App ID (覆盖配置文件)
+    #[arg(long)]
+    feishu_app_id: Option<String>,
+    /// 飞书应用 App Secret (覆盖配置文件)
+    #[arg(long)]
+    feishu_app_secret: Option<String>,
 }
 
 fn init_tracing() {
@@ -142,20 +150,25 @@ async fn main() -> anyhow::Result<()> {
     let evolution_handle = Arc::clone(&evolution);
 
     // ── 飞书 API 客户端 ────────────────────────────────────
-    let feishu_client = FeishuClient::new(
-        cfg.feishu.app_id.clone(),
-        cfg.feishu.app_secret.clone(),
-    );
+    let app_id = cli.feishu_app_id
+        .or_else(|| std::env::var("FEISHU_APP_ID").ok())
+        .unwrap_or_else(|| cfg.feishu.app_id.clone());
+    let app_secret = cli.feishu_app_secret
+        .or_else(|| std::env::var("FEISHU_APP_SECRET").ok())
+        .unwrap_or_else(|| cfg.feishu.app_secret.clone());
+
+    let feishu_client = FeishuClient::new(app_id, app_secret);
+    let feishu_client_rw = Arc::new(RwLock::new(Arc::clone(&feishu_client)));
 
     // ── 飞书 Wiki/Docs/Drive Tools ──────────────────────────
     tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuWikiTool::new(Arc::clone(&feishu_client)),
+        hermess_web::feishu::tools::FeishuWikiTool::new(Arc::clone(&feishu_client_rw)),
     ));
     tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuDocsTool::new(Arc::clone(&feishu_client)),
+        hermess_web::feishu::tools::FeishuDocsTool::new(Arc::clone(&feishu_client_rw)),
     ));
     tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuDriveTool::new(Arc::clone(&feishu_client)),
+        hermess_web::feishu::tools::FeishuDriveTool::new(Arc::clone(&feishu_client_rw)),
     ));
 
     // ── 会话管理器 ─────────────────────────────────────────
@@ -170,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── 启动飞书 Bot（WebSocket 长连接）───────────────────
     let bot = FeishuBot::new(Arc::clone(&feishu_client), Arc::clone(&sessions));
-    tokio::spawn(async move { bot.run().await });
+    let bot_handle = tokio::spawn(async move { bot.run().await });
 
     // ── HTTP 服务器 ────────────────────────────────────────
     let api_key = if cfg.api_key.is_empty() {
@@ -179,7 +192,8 @@ async fn main() -> anyhow::Result<()> {
         cfg.api_key.clone()
     };
     let state = Arc::new(hermess_web::server::AppState {
-        feishu_client,
+        feishu_client: feishu_client_rw,
+        feishu_bot_handle: RwLock::new(Some(bot_handle)),
         sessions,
         api_key,
     });

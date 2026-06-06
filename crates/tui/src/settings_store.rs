@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 /// User-facing settings persisted to disk and editable from the TUI settings panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
 pub struct UserSettings {
     // ── LLM ──
     #[serde(default)]
@@ -25,11 +24,33 @@ pub struct UserSettings {
 
     // ── Finance ──
     #[serde(default)]
-    pub finance_provider: String, // "" | "sina" | "tushare" | "ftshare"
+    pub finance_provider: String, // "ftshare" | "tushare" | "sina" | "eastmoney" | "tencent"
     #[serde(default)]
     pub finance_tushare_token: String,
+
+    // ── Feishu ──
+    #[serde(default)]
+    pub feishu_app_id: String,
+    #[serde(default)]
+    pub feishu_app_secret: String,
 }
 
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self {
+            llm_provider: "deepseek".into(),
+            llm_model: "deepseek-chat".into(),
+            llm_base_url: "https://api.deepseek.com/v1".into(),
+            llm_api_key: "sk-4ab52089feed4d788eee376dfaa4bbb3".into(),
+            search_enabled: false,
+            search_api_key: String::new(),
+            finance_provider: "ftshare".into(),
+            finance_tushare_token: String::new(),
+            feishu_app_id: String::new(),
+            feishu_app_secret: String::new(),
+        }
+    }
+}
 
 impl UserSettings {
     /// Find and load settings from disk.
@@ -47,7 +68,8 @@ impl UserSettings {
             if path.exists() {
                 match std::fs::read_to_string(&path) {
                     Ok(raw) => match serde_json::from_str::<Self>(&raw) {
-                        Ok(s) => {
+                        Ok(mut s) => {
+                            s.fill_defaults();
                             tracing::info!(path = %path.display(), "Loaded user settings");
                             return s;
                         }
@@ -75,31 +97,80 @@ impl UserSettings {
         let raw = serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
         std::fs::write(&path, raw).map_err(|e| format!("write: {e}"))?;
         tracing::info!(path = %path.display(), "Saved user settings");
+
+        // 同步飞书配置到 config/feishu.toml
+        if !self.feishu_app_id.is_empty() {
+            let feishu_path = std::path::Path::new("config/feishu.toml");
+            let feishu_content = format!(
+                r#"# Hermes Web Daemon — 飞书配置
+[feishu]
+app_id = "{}"
+app_secret = "{}"
+"#,
+                self.feishu_app_id, self.feishu_app_secret
+            );
+            if let Some(parent) = feishu_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(feishu_path, &feishu_content) {
+                tracing::warn!(error = %e, "Failed to sync feishu config to config/feishu.toml");
+            } else {
+                tracing::info!("Synced feishu config to config/feishu.toml");
+            }
+        }
+
         Ok(())
     }
 
+    /// Fill empty fields from the struct default, so a sparse settings.json
+    /// doesn't wipe out hardcoded defaults (e.g. the API key).
+    fn fill_defaults(&mut self) {
+        let defaults = Self::default();
+        if self.llm_provider.is_empty() {
+            self.llm_provider = defaults.llm_provider;
+        }
+        if self.llm_model.is_empty() {
+            self.llm_model = defaults.llm_model;
+        }
+        if self.llm_api_key.is_empty() {
+            self.llm_api_key = defaults.llm_api_key;
+        }
+        if self.llm_base_url.is_empty() {
+            self.llm_base_url = defaults.llm_base_url;
+        }
+        if self.finance_provider.is_empty() {
+            self.finance_provider = defaults.finance_provider;
+        }
+    }
+
     /// Apply overrides from environment variables (env takes priority over file values).
+    /// Priority: DEEPSEEK_API_KEY > ANTHROPIC_API_KEY > OPENAI_API_KEY (deepseek is default).
     pub fn apply_env_overrides(&mut self) {
-        if let Ok(v) = std::env::var("ANTHROPIC_API_KEY") {
+        // DeepSeek (default provider): always apply if available
+        if let Ok(v) = std::env::var("DEEPSEEK_API_KEY") {
             if !v.is_empty() {
+                self.llm_provider = "deepseek".into();
                 self.llm_api_key = v;
-                self.llm_provider = "anthropic".into();
+                if self.llm_base_url.is_empty() {
+                    self.llm_base_url = "https://api.deepseek.com/v1".into();
+                }
+                if self.llm_model.is_empty() {
+                    self.llm_model = "deepseek-chat".into();
+                }
             }
         }
         if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-            if !v.is_empty() && self.llm_provider != "anthropic" {
+            if !v.is_empty() && !v.is_empty() && self.llm_api_key.is_empty() {
                 self.llm_api_key = v;
                 if self.llm_provider.is_empty() {
                     self.llm_provider = "openai".into();
                 }
             }
         }
-        if let Ok(v) = std::env::var("DEEPSEEK_API_KEY") {
+        if let Ok(v) = std::env::var("ANTHROPIC_API_KEY") {
             if !v.is_empty() && self.llm_api_key.is_empty() {
                 self.llm_api_key = v;
-                if self.llm_provider.is_empty() {
-                    self.llm_provider = "deepseek".into();
-                }
+                self.llm_provider = "anthropic".into();
             }
         }
         if let Ok(v) = std::env::var("HERMESS_FINANCE_PROVIDER") {
@@ -117,6 +188,12 @@ impl UserSettings {
                 self.search_enabled = true;
                 self.search_api_key = v;
             }
+        }
+        if let Ok(v) = std::env::var("FEISHU_APP_ID") {
+            if !v.is_empty() { self.feishu_app_id = v; }
+        }
+        if let Ok(v) = std::env::var("FEISHU_APP_SECRET") {
+            if !v.is_empty() { self.feishu_app_secret = v; }
         }
     }
 
@@ -142,7 +219,9 @@ fn dirs_next() -> Option<std::path::PathBuf> {
         .or({
             #[cfg(windows)]
             {
-                std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)
+                std::env::var("USERPROFILE")
+                    .ok()
+                    .map(std::path::PathBuf::from)
             }
             #[cfg(not(windows))]
             {
@@ -156,13 +235,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_settings_are_empty() {
+    fn default_settings_are_deepseek() {
         let s = UserSettings::default();
-        assert!(s.llm_provider.is_empty());
-        assert!(s.llm_model.is_empty());
-        assert!(s.llm_api_key.is_empty());
+        assert_eq!(s.llm_provider, "deepseek");
+        assert_eq!(s.llm_model, "deepseek-chat");
+        assert!(!s.llm_api_key.is_empty()); // default api key set
         assert!(!s.search_enabled);
-        assert!(s.finance_provider.is_empty());
+        assert_eq!(s.finance_provider, "ftshare");
     }
 
     #[test]
@@ -176,6 +255,8 @@ mod tests {
             search_api_key: "BSA-test".into(),
             finance_provider: "sina".into(),
             finance_tushare_token: String::new(),
+            feishu_app_id: String::new(),
+            feishu_app_secret: String::new(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let s2: UserSettings = serde_json::from_str(&json).unwrap();
@@ -234,15 +315,37 @@ mod tests {
     }
 
     #[test]
-    fn apply_env_overrides_fills_from_env() {
+    fn apply_env_overrides_preserves_default_key() {
         // This test only checks the logic, not actual env vars
         let mut s = UserSettings::default();
-        // Without env vars set, should remain empty
+        let default_key = s.llm_api_key.clone();
+        // Without env vars set, default api_key is preserved
         s.apply_env_overrides();
-        assert!(s.llm_api_key.is_empty());
+        assert_eq!(s.llm_api_key, default_key);
 
-        // If we manually set the key (as env would), it should persist
-        s.llm_api_key = "test-key".into();
-        assert_eq!(s.llm_api_key, "test-key");
+        // Provider should remain deepseek
+        assert_eq!(s.llm_provider, "deepseek");
+    }
+
+    #[test]
+    fn fill_defaults_restores_empty_fields() {
+        // Simulate loading from a sparse JSON where key is empty
+        let json = r#"{"llm_provider": "", "llm_api_key": "", "search_enabled": true}"#;
+        let mut s: UserSettings = serde_json::from_str(json).unwrap();
+        s.fill_defaults();
+        assert_eq!(s.llm_provider, "deepseek");
+        assert_eq!(s.llm_model, "deepseek-chat");
+        assert_eq!(s.llm_api_key, "sk-4ab52089feed4d788eee376dfaa4bbb3");
+        assert_eq!(s.llm_base_url, "https://api.deepseek.com/v1");
+        assert_eq!(s.finance_provider, "ftshare");
+        assert!(s.search_enabled); // explicit true preserved
+    }
+
+    #[test]
+    fn fill_defaults_restores_ftshare_finance_provider() {
+        let json = r#"{"finance_provider": ""}"#;
+        let mut s: UserSettings = serde_json::from_str(json).unwrap();
+        s.fill_defaults();
+        assert_eq!(s.finance_provider, "ftshare");
     }
 }

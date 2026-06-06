@@ -31,33 +31,57 @@ impl FieldDef {
                 "anthropic" => "Anthropic".into(),
                 "openai" => "OpenAI".into(),
                 "deepseek" => "DeepSeek".into(),
-                _ => if s.llm_provider.is_empty() {
-                    "(未设置)".into()
-                } else {
-                    s.llm_provider.clone()
+                _ => {
+                    if s.llm_provider.is_empty() {
+                        "(未设置)".into()
+                    } else {
+                        s.llm_provider.clone()
+                    }
                 }
             },
-            "模型名称" => if s.llm_model.is_empty() {
-                "(使用默认)".into()
-            } else {
-                s.llm_model.clone()
-            },
+            "模型名称" => {
+                if s.llm_model.is_empty() {
+                    "(使用默认)".into()
+                } else {
+                    s.llm_model.clone()
+                }
+            }
             "API Key" => crate::settings_store::UserSettings::mask_key(&s.llm_api_key),
-            "Base URL" => if s.llm_base_url.is_empty() {
-                "(使用默认)".into()
-            } else {
-                s.llm_base_url.clone()
-            },
-            "启用搜索" => if s.search_enabled { "● 已启用".into() } else { "○ 已关闭".into() },
+            "Base URL" => {
+                if s.llm_base_url.is_empty() {
+                    "(使用默认)".into()
+                } else {
+                    s.llm_base_url.clone()
+                }
+            }
+            "启用搜索" => {
+                if s.search_enabled {
+                    "● 已启用".into()
+                } else {
+                    "○ 已关闭".into()
+                }
+            }
             "搜索 Key" => crate::settings_store::UserSettings::mask_key(&s.search_api_key),
             "金融数据源" => match s.finance_provider.as_str() {
-                "sina" => "新浪财经 (免费, 无需Token)".into(),
-                "tushare" => "TuShare (免费注册)".into(),
-                "ftshare" => "FTShare".into(),
-                _ => "(未启用)".into(),
+                "ftshare" | "" => "FTShare (默认优先)".into(),
+                "tushare" => "TuShare + FTShare 备用".into(),
+                "eastmoney" => "东方财富 + FTShare 备用".into(),
+                "tencent" => "腾讯财经 + FTShare 备用".into(),
+                "sina" => "新浪财经 + FTShare 备用".into(),
+                _ => "FTShare (默认优先)".into(),
             },
-            "TuShare Token" => crate::settings_store::UserSettings::mask_key(&s.finance_tushare_token),
+            "TuShare Token" => {
+                crate::settings_store::UserSettings::mask_key(&s.finance_tushare_token)
+            }
             "预设主题" => state.theme_preset.clone(),
+            "App ID" => {
+                if s.feishu_app_id.is_empty() {
+                    "(未设置)".into()
+                } else {
+                    s.feishu_app_id.clone()
+                }
+            }
+            "App Secret" => crate::settings_store::UserSettings::mask_key(&s.feishu_app_secret),
             _ => "?".into(),
         }
     }
@@ -66,21 +90,50 @@ impl FieldDef {
 pub fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDef> {
     match tab {
         SettingsTab::Llm => vec![
-            FieldDef { label: "提供商标识", kind: FieldKind::Dropdown },
-            FieldDef { label: "模型名称", kind: FieldKind::Text },
-            FieldDef { label: "API Key", kind: FieldKind::Text },
-            FieldDef { label: "Base URL", kind: FieldKind::Text },
+            FieldDef {
+                label: "提供商标识",
+                kind: FieldKind::Dropdown,
+            },
+            FieldDef {
+                label: "模型名称",
+                kind: FieldKind::Text,
+            },
+            FieldDef {
+                label: "API Key",
+                kind: FieldKind::Text,
+            },
+            FieldDef {
+                label: "Base URL",
+                kind: FieldKind::Text,
+            },
         ],
         SettingsTab::Search => vec![
-            FieldDef { label: "启用搜索", kind: FieldKind::Toggle },
-            FieldDef { label: "搜索 Key", kind: FieldKind::Text },
+            FieldDef {
+                label: "启用搜索",
+                kind: FieldKind::Toggle,
+            },
+            FieldDef {
+                label: "搜索 Key",
+                kind: FieldKind::Text,
+            },
         ],
         SettingsTab::Finance => vec![
-            FieldDef { label: "金融数据源", kind: FieldKind::Dropdown },
-            FieldDef { label: "TuShare Token", kind: FieldKind::Text },
+            FieldDef {
+                label: "金融数据源",
+                kind: FieldKind::Dropdown,
+            },
+            FieldDef {
+                label: "TuShare Token",
+                kind: FieldKind::Text,
+            },
         ],
-        SettingsTab::Theme => vec![
-            FieldDef { label: "预设主题", kind: FieldKind::Dropdown },
+        SettingsTab::Theme => vec![FieldDef {
+            label: "预设主题",
+            kind: FieldKind::Dropdown,
+        }],
+        SettingsTab::Feishu => vec![
+            FieldDef { label: "App ID", kind: FieldKind::Text },
+            FieldDef { label: "App Secret", kind: FieldKind::Text },
         ],
     }
 }
@@ -115,10 +168,10 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
     frame.render_widget(block, overlay_area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(1),  // tab bar
-        Constraint::Length(1),  // spacer
-        Constraint::Min(1),     // field list
-        Constraint::Length(1),  // footer
+        Constraint::Length(1), // tab bar
+        Constraint::Length(1), // spacer
+        Constraint::Min(1),    // field list
+        Constraint::Length(1), // footer
     ])
     .split(inner);
 
@@ -134,20 +187,38 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         vec![
             Span::styled(
                 " ⚠ 有未保存修改 ",
-                Style::default().fg(theme::BG).bg(theme::YELLOW).add_modifier(ratatui::style::Modifier::BOLD),
+                Style::default()
+                    .fg(theme::BG)
+                    .bg(theme::YELLOW)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ),
-            Span::styled(" 再按一次 Esc/s/q 放弃修改 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
-            Span::styled(" 或 Ctrl+S 保存 ", Style::default().fg(theme::BG).bg(theme::GREEN)),
+            Span::styled(
+                " 再按一次 Esc/s/q 放弃修改 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
+            Span::styled(
+                " 或 Ctrl+S 保存 ",
+                Style::default().fg(theme::BG).bg(theme::GREEN),
+            ),
         ]
     } else if state.settings_saved_flash > 0 {
         vec![Span::styled(
             " ✓ 设置已保存 ",
-            Style::default().fg(theme::BG).bg(theme::GREEN).add_modifier(ratatui::style::Modifier::BOLD),
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::GREEN)
+                .add_modifier(ratatui::style::Modifier::BOLD),
         )]
     } else if state.settings_editing {
         vec![
-            Span::styled(" Enter 确认 ", Style::default().fg(theme::BG).bg(theme::GREEN)),
-            Span::styled(" Esc 取消 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+            Span::styled(
+                " Enter 确认 ",
+                Style::default().fg(theme::BG).bg(theme::GREEN),
+            ),
+            Span::styled(
+                " Esc 取消 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
         ]
     } else {
         let dirty_hint = if state.settings_dirty {
@@ -160,8 +231,14 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         };
         let mut base = vec![
             Span::styled(" ↑↓ 导航 ", Style::default().fg(theme::BG).bg(theme::CYAN)),
-            Span::styled(" Enter 编辑 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
-            Span::styled(" Space 切换 ", Style::default().fg(theme::SUBTLE).bg(theme::PANEL)),
+            Span::styled(
+                " Enter 编辑 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
+            Span::styled(
+                " Space 切换 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
         ];
         base.extend(dirty_hint);
         base.push(Span::styled(
@@ -179,7 +256,13 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
 }
 
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &TuiAppState) {
-    let tabs = [SettingsTab::Llm, SettingsTab::Search, SettingsTab::Finance, SettingsTab::Theme];
+    let tabs = [
+        SettingsTab::Llm,
+        SettingsTab::Search,
+        SettingsTab::Finance,
+        SettingsTab::Feishu,
+        SettingsTab::Theme,
+    ];
     let spans: Vec<Span> = tabs
         .iter()
         .enumerate()
@@ -250,7 +333,11 @@ fn render_field_list(frame: &mut Frame, area: Rect, state: &TuiAppState, fields:
                 FieldKind::Text => "",
             };
 
-            let cursor = if state.settings_editing && is_focused { "│" } else { "" };
+            let cursor = if state.settings_editing && is_focused {
+                "│"
+            } else {
+                ""
+            };
 
             Line::from(vec![
                 Span::styled(focus_marker, label_style),

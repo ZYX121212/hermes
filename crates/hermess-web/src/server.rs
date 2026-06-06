@@ -1,4 +1,5 @@
 // axum HTTP 服务器 — 飞书 Bot + 通用 Chat API
+use crate::feishu::bot::FeishuBot;
 use crate::feishu::client::FeishuClient;
 use crate::session::SessionManager;
 use agent_core::context::Context;
@@ -14,6 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_http::{
     cors::CorsLayer,
     limit::RequestBodyLimitLayer,
@@ -34,7 +36,8 @@ impl MakeRequestId for MakeRequestUuid {
 // ── App State ────────────────────────────────────────────────
 
 pub struct AppState {
-    pub feishu_client: Arc<FeishuClient>,
+    pub feishu_client: Arc<RwLock<Arc<FeishuClient>>>,
+    pub feishu_bot_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub sessions: Arc<SessionManager>,
     pub api_key: String,
 }
@@ -67,6 +70,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/chat", post(handle_chat))
         .route("/health", get(health))
+        .route("/admin/feishu/reload", post(reload_feishu))
+        .route("/admin/feishu/status", get(feishu_status))
         .layer((
             SetRequestIdLayer::x_request_id(MakeRequestUuid),
             RequestBodyLimitLayer::new(4 * 1024 * 1024),
@@ -82,7 +87,7 @@ async fn auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let path = req.uri().path();
-    if path == "/health" {
+    if path == "/health" || path.starts_with("/admin") {
         return Ok(next.run(req).await);
     }
     if state.api_key.is_empty() {
@@ -182,4 +187,55 @@ pub(crate) async fn run_agent_once(
     }
 
     (reply, errors)
+}
+
+// ── Admin: 飞书热加载 ───────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct FeishuReloadRequest {
+    app_id: String,
+    app_secret: String,
+}
+
+async fn reload_feishu(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FeishuReloadRequest>,
+) -> impl IntoResponse {
+    if req.app_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "app_id is required"}))).into_response();
+    }
+
+    let new_client = FeishuClient::new(req.app_id.clone(), req.app_secret.clone());
+
+    // Replace client in RwLock
+    {
+        let mut guard = state.feishu_client.write().await;
+        *guard = Arc::clone(&new_client);
+    }
+    tracing::info!(app_id = %req.app_id, "feishu client replaced via reload");
+
+    // Restart bot
+    let mut bot_handle = state.feishu_bot_handle.write().await;
+    if let Some(handle) = bot_handle.take() {
+        handle.abort();
+        tracing::info!("old feishu bot aborted");
+    }
+    let sessions = Arc::clone(&state.sessions);
+    let bot_client = Arc::clone(&new_client);
+    let new_bot = FeishuBot::new(bot_client, sessions);
+    let handle = tokio::spawn(async move { new_bot.run().await });
+    *bot_handle = Some(handle);
+    tracing::info!("new feishu bot spawned");
+
+    (StatusCode::OK, Json(serde_json::json!({"status": "ok", "message": "飞书配置已更新并重连"}))).into_response()
+}
+
+async fn feishu_status(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let client = state.feishu_client.read().await;
+    (StatusCode::OK, Json(serde_json::json!({
+        "app_id": client.app_id(),
+        "connected": state.feishu_bot_handle.read().await.is_some(),
+    }))).into_response()
 }

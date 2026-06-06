@@ -149,6 +149,7 @@ pub enum SettingsTab {
     Search,
     Finance,
     Theme,
+    Feishu,
 }
 
 impl SettingsTab {
@@ -156,7 +157,8 @@ impl SettingsTab {
         match self {
             SettingsTab::Llm => SettingsTab::Search,
             SettingsTab::Search => SettingsTab::Finance,
-            SettingsTab::Finance => SettingsTab::Theme,
+            SettingsTab::Finance => SettingsTab::Feishu,
+            SettingsTab::Feishu => SettingsTab::Theme,
             SettingsTab::Theme => SettingsTab::Llm,
         }
     }
@@ -166,7 +168,8 @@ impl SettingsTab {
             SettingsTab::Llm => SettingsTab::Theme,
             SettingsTab::Search => SettingsTab::Llm,
             SettingsTab::Finance => SettingsTab::Search,
-            SettingsTab::Theme => SettingsTab::Finance,
+            SettingsTab::Feishu => SettingsTab::Finance,
+            SettingsTab::Theme => SettingsTab::Feishu,
         }
     }
 
@@ -176,6 +179,7 @@ impl SettingsTab {
             SettingsTab::Search => "搜索",
             SettingsTab::Finance => "金融",
             SettingsTab::Theme => "主题",
+            SettingsTab::Feishu => "飞书",
         }
     }
 }
@@ -469,7 +473,9 @@ impl TuiAppState {
             slash_command_cursor: 0,
             slash_command_popup: None,
             theme_preset: "tokyo-night".into(),
-            session_tabs: vec![SessionTab { name: "会话1".into() }],
+            session_tabs: vec![SessionTab {
+                name: "会话1".into(),
+            }],
             active_tab_index: 0,
         }
     }
@@ -581,7 +587,9 @@ pub fn wrapped_line_count(text: &str, width: u16) -> usize {
 /// Clamp scroll position to a safe range: 0 .. max(0, content_lines - viewport_h).
 /// Prevents overflow in ratatui's `area.height + scroll.y` calculation.
 pub fn clamp_scroll(scroll: u16, content_lines: usize, viewport_h: u16) -> u16 {
-    let max = content_lines.saturating_sub(viewport_h as usize).min(10_000) as u16;
+    let max = content_lines
+        .saturating_sub(viewport_h as usize)
+        .min(10_000) as u16;
     scroll.min(max)
 }
 
@@ -675,10 +683,17 @@ mod tests {
         let next2 = next.next();
         let next3 = next2.next();
         let next4 = next3.next();
-        assert_eq!(next4, start, "4×next should return to start (4 panels in cycle)");
+        assert_eq!(
+            next4, start,
+            "4×next should return to start (4 panels in cycle)"
+        );
         let prev = start.prev();
         assert_eq!(prev, next3, "prev from start should equal next3");
-        assert_eq!(prev.prev(), next2, "prev-prev from start should equal next2");
+        assert_eq!(
+            prev.prev(),
+            next2,
+            "prev-prev from start should equal next2"
+        );
     }
 
     // ── LeftTab ──
@@ -844,14 +859,8 @@ mod tests {
 
     #[test]
     fn test_strip_html_nested_tags() {
-        assert_eq!(
-            strip_html("<div><p>nested</p></div>"),
-            "nested"
-        );
-        assert_eq!(
-            strip_html("<span class=\"foo\">content</span>"),
-            "content"
-        );
+        assert_eq!(strip_html("<div><p>nested</p></div>"), "nested");
+        assert_eq!(strip_html("<span class=\"foo\">content</span>"), "content");
     }
 
     #[test]
@@ -866,14 +875,8 @@ mod tests {
 
     #[test]
     fn test_strip_html_mixed_content() {
-        assert_eq!(
-            strip_html("<div>hello <b>world</b></div>"),
-            "hello world"
-        );
-        assert_eq!(
-            strip_html("text &amp; <br/> more"),
-            "text &  more"
-        );
+        assert_eq!(strip_html("<div>hello <b>world</b></div>"), "hello world");
+        assert_eq!(strip_html("text &amp; <br/> more"), "text &  more");
     }
 
     #[test]
