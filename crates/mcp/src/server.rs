@@ -111,16 +111,29 @@ async fn handle_request(req: &JsonRpcRequest, handler: &dyn McpHandler) -> JsonR
             Err(e) => JsonRpcResponse::error(id, INTERNAL_ERROR, &e.to_string()),
         },
         METHOD_TOOLS_CALL => {
-            let params: ToolCallParams = match req.params.as_ref().and_then(|p| serde_json::from_value(p.clone()).ok()) {
+            let params: ToolCallParams = match req
+                .params
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
                 Some(p) => p,
-                None => return JsonRpcResponse::error(id, INVALID_PARAMS, "invalid tool call params"),
+                None => {
+                    return JsonRpcResponse::error(id, INVALID_PARAMS, "invalid tool call params")
+                }
             };
             match handler.call_tool(&params.name, params.arguments).await {
-                Ok(result) => JsonRpcResponse::success(id.unwrap(), serde_json::to_value(result).unwrap_or_default()),
+                Ok(result) => JsonRpcResponse::success(
+                    id.unwrap(),
+                    serde_json::to_value(result).unwrap_or_default(),
+                ),
                 Err(e) => JsonRpcResponse::error(id, INTERNAL_ERROR, &e.to_string()),
             }
         }
-        _ => JsonRpcResponse::error(id, METHOD_NOT_FOUND, &format!("unknown method: {}", req.method)),
+        _ => JsonRpcResponse::error(
+            id,
+            METHOD_NOT_FOUND,
+            &format!("unknown method: {}", req.method),
+        ),
     }
 }
 

@@ -1,6 +1,8 @@
 [package]
 name = "memory"
 version = "0.1.0"
+description = "Dual-layer memory system with working memory and vector long-term storage"
+license = "MIT"
 edition = "2021"
 
 [dependencies]

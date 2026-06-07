@@ -18,43 +18,33 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     }
     frame.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
 
-    // ── Vertical split: header (1), main (fill), mini-log (opt), footer (1) ──
-    let needs_mini_log = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
+    // ── Vertical split: header (1), session tabs (opt), main (fill), footer (dyn) ──
+    let session_tabs_h = if state.session_tabs.len() > 1 { 1 } else { 0 };
 
-    let v_chunks = if needs_mini_log {
-        Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(1),    // main
-            Constraint::Length(3), // mini-log
-            Constraint::Length(1), // footer
-        ])
-        .split(area)
+    // Footer height: 1 line for hint + input_line_count lines for multiline input
+    let footer_h = if state.awaiting_input || state.search_active || state.slash_command_active {
+        (state.input_line_count as u16).max(1) + 1 // +1 for hints line
     } else {
-        Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(1),    // main
-            Constraint::Length(1), // footer
-        ])
-        .split(area)
+        1
     };
+
+    let v_chunks = Layout::vertical([
+        Constraint::Length(1),              // header
+        Constraint::Length(session_tabs_h), // session tabs
+        Constraint::Min(1),                 // main
+        Constraint::Length(footer_h),       // footer
+    ])
+    .split(area);
 
     let header_area = v_chunks[0];
-    let main_area = v_chunks[1];
+    let session_tabs_area = v_chunks[1];
+    let main_area = v_chunks[2];
 
-    // ── Render tab bar between header and main area (only when multiple tabs) ──
+    // ── Render session tab bar between header and main area (only when multiple tabs) ──
     if state.session_tabs.len() > 1 {
-        panels::tab_bar::render_tab_bar(frame, ratatui::layout::Rect {
-            x: main_area.x,
-            y: main_area.y.saturating_sub(1),
-            width: main_area.width,
-            height: 1,
-        }, state);
+        panels::tab_bar::render_tab_bar(frame, session_tabs_area, state);
     }
-    let footer_area = if needs_mini_log {
-        v_chunks[3]
-    } else {
-        v_chunks[2]
-    };
+    let footer_area = v_chunks[3];
 
     // ── Main area horizontal split ──
     let (left_pct, right_pct) = state.split_pct();
@@ -123,7 +113,11 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
         _ => {
             if state.turn == 0 && !state.agent_done && state.phase == AgentPhase::Idle {
                 render_welcome(frame, left_area, state);
-            } else if state.agent_done && state.results_visible {
+            } else if state.results_visible
+                && (state.agent_done
+                    || state.summary.is_some()
+                    || !state.summary_streaming_buffer.is_empty())
+            {
                 panels::results::render_results(
                     frame,
                     left_area,
@@ -146,7 +140,11 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
                 );
             } else {
                 // Log hidden: show minimal panel
-                let block = theme::panel_block("Hermess", theme::MUTED, state.focused_panel == FocusedPanel::MainLeft);
+                let block = theme::panel_block(
+                    "Hermess",
+                    theme::MUTED,
+                    state.focused_panel == FocusedPanel::MainLeft,
+                );
                 let hint = if state.agent_done {
                     "按 l 显示日志"
                 } else {
@@ -175,27 +173,17 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
         );
     }
 
-    // ── Render mini-log during Planning/Executing ──
-    if needs_mini_log {
-        panels::log::render_mini_log(
-            frame,
-            v_chunks[2],
-            state,
-            state.focused_panel == FocusedPanel::MiniLog,
-        );
-    }
-
     // ── Render header ──
     panels::header::render_header(frame, header_area, state);
 
     // ── Render footer / input bar ──
-    // When the agent is waiting for user input, show the text entry bar.
-    // Otherwise, show context-sensitive keyboard shortcut hints.
-    if state.awaiting_input || state.search_active || state.slash_command_active {
-        let input_focused = state.focused_panel == FocusedPanel::Input;
+    let input_focused = state.focused_panel == FocusedPanel::Input;
+    if state.awaiting_input || state.search_active || state.slash_command_active || input_focused {
+        // Show the input bar (with text field, search box, or idle prompt)
         panels::input::render_input(frame, footer_area, state, input_focused);
     } else {
-        panels::footer::render_footer(frame, footer_area, state);
+        // Show context-sensitive keyboard hints when focus is elsewhere
+        panels::footer::render_footer(frame, footer_area, state, false);
     }
 
     // ── Render @-mention context reference popup above input area ──
@@ -221,18 +209,6 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     // ── Render slash command result popup (on top of output overlay) ──
     if let Some(ref result) = state.slash_command_popup {
         panels::slash_command::render_slash_result(frame, area, result);
-    }
-
-    // ── Render context_ref popup above footer ──
-    if state.context_ref_active && !state.context_ref_items.is_empty() {
-        // Render above the footer
-        let _ref_area = ratatui::layout::Rect {
-            x: footer_area.x + 1,
-            y: footer_area.y.saturating_sub(6),
-            width: 48.min(footer_area.width.saturating_sub(2)),
-            height: 6,
-        };
-        // context_ref will be added in a later task
     }
 }
 
@@ -327,7 +303,14 @@ fn render_welcome(frame: &mut Frame, area: ratatui::layout::Rect, state: &TuiApp
                         .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(Span::styled(
-                    format!("  模型: {}", if state.user_settings.llm_model.is_empty() { "(默认)" } else { &state.user_settings.llm_model }),
+                    format!(
+                        "  模型: {}",
+                        if state.user_settings.llm_model.is_empty() {
+                            "(默认)"
+                        } else {
+                            &state.user_settings.llm_model
+                        }
+                    ),
                     Style::default().fg(theme::MUTED).bg(theme::PANEL),
                 )),
                 Line::from(Span::styled("", Style::default().bg(theme::PANEL))),
@@ -339,7 +322,9 @@ fn render_welcome(frame: &mut Frame, area: ratatui::layout::Rect, state: &TuiApp
         };
 
         frame.render_widget(
-            Paragraph::new(settings_hint).style(Style::default().bg(theme::PANEL)).wrap(Wrap { trim: false }),
+            Paragraph::new(settings_hint)
+                .style(Style::default().bg(theme::PANEL))
+                .wrap(Wrap { trim: false }),
             chunks[3],
         );
     } else {
@@ -357,8 +342,7 @@ fn render_welcome(frame: &mut Frame, area: ratatui::layout::Rect, state: &TuiApp
                 Style::default().fg(theme::TEXT).bg(theme::PANEL),
             ),
         ];
-        let hint = Paragraph::new(Line::from(lines))
-            .style(Style::default().bg(theme::PANEL));
+        let hint = Paragraph::new(Line::from(lines)).style(Style::default().bg(theme::PANEL));
         frame.render_widget(hint, inner);
     }
 }

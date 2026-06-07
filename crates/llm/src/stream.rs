@@ -84,6 +84,31 @@ impl Stream for SseChunkStream {
                     return Poll::Ready(Some(Err(anyhow::anyhow!("Stream error: {e}"))));
                 }
                 Poll::Ready(None) => {
+                    // Process any remaining data in the buffer before closing
+                    let remaining = std::mem::take(&mut self.buffer);
+                    let line = remaining.trim().to_string();
+                    if !line.is_empty() && line != "data: [DONE]" && !line.starts_with(':') {
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                                if val["type"].as_str() != Some("message_stop")
+                                    && val["choices"][0]["finish_reason"].as_str() != Some("stop")
+                                {
+                                    if let Some(text) = val["delta"]["text"].as_str() {
+                                        if !text.is_empty() {
+                                            return Poll::Ready(Some(Ok(text.to_string())));
+                                        }
+                                    }
+                                    if let Some(text) =
+                                        val["choices"][0]["delta"]["content"].as_str()
+                                    {
+                                        if !text.is_empty() {
+                                            return Poll::Ready(Some(Ok(text.to_string())));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     return Poll::Ready(None);
                 }
                 Poll::Pending => return Poll::Pending,

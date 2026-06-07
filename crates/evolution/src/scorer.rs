@@ -68,6 +68,7 @@ mod tests {
             }],
             success: true,
             duration_ms: 1000,
+            user_input: None,
         };
         let s = scorer.score(&result);
         assert!(s > 0.0, "successful result should score positive, got {s}");
@@ -81,6 +82,7 @@ mod tests {
             outputs: vec![],
             success: false,
             duration_ms: 5000,
+            user_input: None,
         };
         let s = scorer.score(&result);
         assert!(s < 0.0, "failed result should score negative, got {s}");
@@ -100,6 +102,7 @@ mod tests {
             }],
             success: true,
             duration_ms: 5000,
+            user_input: None,
         };
         let s = scorer.score(&result);
         // Should be lower than a fast success (which would score 1.0)

@@ -1,10 +1,14 @@
 // crates/hermess-agent/src/agent.rs
 use agent_core::context::Context;
-use agent_core::{AgentEvent, ExecutionResult, HermesAgent, Insight, MemoryChunk, Observation, Plan};
+use agent_core::{
+    AgentEvent, ExecutionResult, HermesAgent, Insight, MemoryChunk, Observation, Plan,
+};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::distiller::SkillDistiller;
 
 /// The default agent implementation, shared by CLI and web entrypoints.
 pub struct SmallHermesAgent {
@@ -27,6 +31,10 @@ pub struct SmallHermesAgent {
     pub compress_keep_ratio: f64,
     /// Conversation history for multi-turn context (user_input → summary pairs).
     pub conversation_history: Vec<(String, String)>,
+    /// Recent evolution insights for closed-loop feedback into planning.
+    pub recent_insights: Vec<String>,
+    /// Automatic skill distillation from task execution traces.
+    pub distiller: SkillDistiller,
     /// TUI input state for in-terminal interactive input.
     #[cfg(feature = "tui")]
     pub tui_input: Option<Arc<tui::TuiInput>>,
@@ -74,10 +82,7 @@ impl SmallHermesAgent {
 
     /// Generate a natural-language summary, streaming tokens to the TUI when available.
     /// If all steps used `reply`, returns the reply content directly without re-summarizing.
-    pub async fn summarize_result(
-        &self,
-        result: &ExecutionResult,
-    ) -> anyhow::Result<String> {
+    pub async fn summarize_result(&self, result: &ExecutionResult) -> anyhow::Result<String> {
         // 如果所有成功的步骤都是 reply，直接返回内容（无需 LLM 重述）
         let reply_outputs: Vec<&str> = result
             .outputs
@@ -92,7 +97,14 @@ impl SmallHermesAgent {
         let outputs: Vec<String> = result
             .outputs
             .iter()
-            .map(|o| format!("[{}:{}] {}", o.tool, if o.success { "OK" } else { "FAIL" }, o.content))
+            .map(|o| {
+                format!(
+                    "[{}:{}] {}",
+                    o.tool,
+                    if o.success { "OK" } else { "FAIL" },
+                    o.content
+                )
+            })
             .collect();
         let prompt = format!(
             "Summarize the following execution results in one concise Chinese sentence. \
@@ -125,11 +137,8 @@ impl SmallHermesAgent {
     /// 保存会话状态到文件，用于 `--save`。
     pub fn save_state(&self, path: &str) -> anyhow::Result<()> {
         let chunks: Vec<agent_core::MemoryChunk> = self.working_memory.all();
-        let state = agent_core::SessionState::new(
-            self.turn,
-            self.conversation_history.clone(),
-            chunks,
-        );
+        let state =
+            agent_core::SessionState::new(self.turn, self.conversation_history.clone(), chunks);
         state.save_to_file(path)
     }
 
@@ -175,10 +184,8 @@ impl SmallHermesAgent {
 
         match self.llm.complete(prompt).await {
             Ok(compressed) => {
-                let mut new_history: Vec<(String, String)> = vec![(
-                    "[历史摘要]".to_string(),
-                    compressed.trim().to_string(),
-                )];
+                let mut new_history: Vec<(String, String)> =
+                    vec![("[历史摘要]".to_string(), compressed.trim().to_string())];
                 let keep_start = self.conversation_history.len().saturating_sub(keep);
                 let rest = self.conversation_history.split_off(keep_start);
                 new_history.extend(rest);
@@ -197,6 +204,29 @@ impl SmallHermesAgent {
         }
     }
 
+    /// Scan recent conversation history for user correction patterns.
+    fn detect_user_correction(history: &[(String, String)]) -> bool {
+        let correction_patterns = [
+            "不对",
+            "错了",
+            "应该是",
+            "改成",
+            "不要",
+            "不是这样",
+            "换一种",
+            "重新",
+            "纠正",
+            "修正",
+            "不应该",
+            "不是",
+            "搞错了",
+        ];
+        // Check last 3 user messages for correction patterns
+        history.iter().rev().take(3).any(|(user, _)| {
+            let lower = user.to_lowercase();
+            correction_patterns.iter().any(|p| lower.contains(p))
+        })
+    }
 }
 
 /// Build a simple fallback summary from raw step outputs when LLM summarization fails.
@@ -210,7 +240,14 @@ fn build_fallback_summary(result: &ExecutionResult) -> String {
         .map(|o| {
             let status = if o.success { "OK" } else { "FAIL" };
             let preview = if o.content.len() > 200 {
-                format!("{}...", &o.content[..200])
+                let end = o
+                    .content
+                    .char_indices()
+                    .take_while(|&(i, _)| i < 200)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(0);
+                format!("{}...", &o.content[..end])
             } else {
                 o.content.clone()
             };
@@ -227,35 +264,35 @@ fn build_fallback_summary(result: &ExecutionResult) -> String {
 
 #[async_trait]
 impl HermesAgent for SmallHermesAgent {
-    async fn observe(
-        &self,
-        ctx: &Context,
-    ) -> anyhow::Result<Observation> {
+    async fn observe(&self, ctx: &Context) -> anyhow::Result<Observation> {
         let user_input = if ctx.is_interactive() {
             #[cfg(feature = "tui")]
             {
                 if let Some(ref tui_input) = self.tui_input {
-                    tui_input
-                        .awaiting
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    tui_input.buffer.lock().clear();
-                    *tui_input.submitted.lock() = None;
+                    if let Some(input) = ctx.take_seeded_interactive_task() {
+                        input
+                    } else {
+                        tui_input
+                            .awaiting
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        tui_input.buffer.lock().clear();
 
-                    let mut input = String::new();
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        if let Some(text) = tui_input.submitted.lock().take() {
-                            input = text;
-                            break;
+                        let mut input = String::new();
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            if let Some(text) = tui_input.submitted.lock().take() {
+                                input = text;
+                                break;
+                            }
+                            if ctx.should_stop() {
+                                break;
+                            }
                         }
-                        if ctx.should_stop() {
-                            break;
-                        }
+                        tui_input
+                            .awaiting
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                        input
                     }
-                    tui_input
-                        .awaiting
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                    input
                 } else {
                     ctx.next_interactive_task()
                 }
@@ -278,20 +315,66 @@ impl HermesAgent for SmallHermesAgent {
                 user_input: String::new(),
                 env_state: serde_json::json!({}),
                 memory_ctx: vec![],
+                conversation_history: vec![],
+                recent_insights: vec![],
             });
         }
 
         let mut memory_ctx = self.working_memory.recent(5);
 
-        // Inject conversation history as context for multi-turn coherence
-        for (i, (q, a)) in self.conversation_history.iter().rev().take(5).enumerate() {
-            memory_ctx.push(MemoryChunk {
-                id: uuid::Uuid::new_v4(),
-                content: format!("[对话记录 #{}] 用户: {} | 结果: {}", i + 1, q, a),
-                embedding: vec![],
-                timestamp: chrono::Utc::now(),
-            });
+        // ── Search long-term vector memory for relevant past insights ──
+        if !user_input.is_empty() {
+            match self.evolution.search_memory(&user_input, 6).await {
+                Ok(results) => {
+                    let mut added = 0;
+                    for chunk in results {
+                        // 过滤噪音：内容太短、重要性太低
+                        if chunk.content.len() < 15 || chunk.importance < 0.3 {
+                            continue;
+                        }
+                        // 去重：跳过已在 working memory 中出现的内容
+                        let first_80: String = chunk.content.chars().take(80).collect();
+                        if memory_ctx.iter().any(|m| m.content.contains(&first_80)) {
+                            continue;
+                        }
+                        memory_ctx.push(MemoryChunk {
+                            id: uuid::Uuid::new_v4(),
+                            content: format!("[长期记忆] {}", chunk.content),
+                            embedding: vec![],
+                            timestamp: chunk.timestamp,
+                            importance: chunk.importance,
+                        });
+                        added += 1;
+                        if added >= 3 {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "长时记忆检索失败");
+                }
+            }
         }
+
+        // ── Recent conversation history (last 10 turns) ──
+        let recent_history: Vec<(String, String)> = self
+            .conversation_history
+            .iter()
+            .rev()
+            .take(10)
+            .rev()
+            .cloned()
+            .collect();
+
+        // ── Recent evolution insights for closed-loop feedback ──
+        let insights: Vec<String> = self
+            .recent_insights
+            .iter()
+            .rev()
+            .take(5)
+            .rev()
+            .cloned()
+            .collect();
 
         Ok(Observation {
             id: uuid::Uuid::new_v4(),
@@ -299,8 +382,11 @@ impl HermesAgent for SmallHermesAgent {
             user_input,
             env_state: serde_json::json!({
                 "working_memory_size": self.working_memory.len(),
+                "turn": self.turn,
             }),
             memory_ctx,
+            conversation_history: recent_history,
+            recent_insights: insights,
         })
     }
 
@@ -312,6 +398,8 @@ impl HermesAgent for SmallHermesAgent {
         let result = self.scheduler.execute(&plan).await?;
 
         for output in &result.outputs {
+            self.evolution
+                .record_tool_result(&output.tool, output.success, output.duration_ms);
             self.working_memory.push(MemoryChunk {
                 id: uuid::Uuid::new_v4(),
                 content: format!(
@@ -320,15 +408,13 @@ impl HermesAgent for SmallHermesAgent {
                 ),
                 embedding: vec![],
                 timestamp: chrono::Utc::now(),
+                importance: if output.success { 1.0 } else { 1.5 },
             });
         }
         Ok(result)
     }
 
-    async fn reflect(
-        &self,
-        result: &ExecutionResult,
-    ) -> anyhow::Result<Insight> {
+    async fn reflect(&self, result: &ExecutionResult) -> anyhow::Result<Insight> {
         self.reflector.reflect(result).await
     }
 
@@ -376,7 +462,7 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    break;
+                    continue;
                 }
             };
 
@@ -390,9 +476,10 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    break;
+                    continue;
                 }
             };
+            result.user_input = Some(user_input.clone());
 
             let mut replan_attempt = 0;
             while !result.success && replan_attempt < self.max_replans {
@@ -420,7 +507,10 @@ impl HermesAgent for SmallHermesAgent {
                 }
 
                 match self.execute(plan).await {
-                    Ok(r) => result = r,
+                    Ok(r) => {
+                        result = r;
+                        result.user_input = Some(user_input.clone());
+                    }
                     Err(e) => {
                         let msg = format!("Execute 阶段失败: {:#}", e);
                         self.emit(AgentEvent::AgentError {
@@ -445,7 +535,7 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    break;
+                    continue;
                 }
             };
             self.emit(AgentEvent::ReflectPhaseComplete {
@@ -454,12 +544,50 @@ impl HermesAgent for SmallHermesAgent {
             });
 
             self.emit(AgentEvent::EvolvePhaseStarted);
+            let lesson = insight.lesson.clone();
+            let score = insight.score;
             if let Err(e) = self.evolve(insight).await {
                 let msg = format!("Evolve 阶段失败: {:#}", e);
                 self.emit(AgentEvent::AgentError { message: msg });
                 // evolve 失败不终止，继续总结
+            } else {
+                // ── Closed-loop feedback: store insight for next planning cycle ──
+                self.recent_insights
+                    .push(format!("[score={:.2}] {}", score, lesson));
+                if self.recent_insights.len() > 20 {
+                    self.recent_insights.remove(0);
+                }
             }
-            self.emit(AgentEvent::EvolvePhaseComplete);
+            // ── Skill distillation: extract reusable patterns from this execution ──
+            {
+                let had_replan = replan_attempt > 0;
+                let had_correction = Self::detect_user_correction(&self.conversation_history);
+                let distiller = &self.distiller;
+                let llm = &*self.llm;
+                let result_ref = &result;
+                let user_input_ref = &user_input;
+                match distiller
+                    .distill(llm, result_ref, had_replan, had_correction, user_input_ref)
+                    .await
+                {
+                    crate::distiller::DistillResult::Written {
+                        name,
+                        path,
+                        trigger,
+                    } => {
+                        self.emit(AgentEvent::SummaryReady {
+                            summary: format!(
+                                "📦 技能已提炼: {name} ({trigger}) → {}",
+                                path.display()
+                            ),
+                        });
+                    }
+                    crate::distiller::DistillResult::Failed(e) => {
+                        tracing::warn!(error = %e, "Skill distillation failed");
+                    }
+                    crate::distiller::DistillResult::Skipped => {}
+                }
+            }
 
             let summary = self.summarize_result(&result).await;
             self.record_usage();
@@ -480,6 +608,8 @@ impl HermesAgent for SmallHermesAgent {
                     self.emit(AgentEvent::SummaryReady { summary: msg });
                 }
             }
+
+            self.emit(AgentEvent::EvolvePhaseComplete);
 
             if ctx.should_stop() {
                 break;

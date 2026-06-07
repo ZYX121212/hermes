@@ -1,8 +1,30 @@
-# Hermess Gateway configuration
+# Hermess Gateway configuration example
+# Copy to gateway.toml and customize.
 [gateway]
 listen = "0.0.0.0:9090"
-api_key = "sk-gateway-local"
+api_key = "${GATEWAY_API_KEY}"
 default_mode = "cost-first"
+
+# ── Static models (fallback when auto-discovery fails) ──
+[[gateway.models]]
+name = "deepseek-chat"
+provider = "openai"
+base_url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+cost_per_1m_input = 0.14
+cost_per_1m_output = 0.55
+capability = { reasoning = 0.4, coding = 0.5, creative = 0.45, knowledge = 0.5, speed_ms = 80 }
+tags = ["general", "fast"]
+
+[[gateway.models]]
+name = "deepseek-reasoner"
+provider = "openai"
+base_url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+cost_per_1m_input = 0.55
+cost_per_1m_output = 2.19
+capability = { reasoning = 0.9, coding = 0.85, creative = 0.8, knowledge = 0.85, speed_ms = 1000 }
+tags = ["reasoning"]
 
 # ── Auto-discovery: auto-register all models from upstream /v1/models ──
 # You can add multiple [[gateway.discovery]] blocks for multiple providers.
@@ -15,30 +37,18 @@ default_cost_input = 0.27
 default_cost_output = 1.10
 default_tags = ["deepseek"]
 
-# ── Static models (optional, takes priority over discovered) ──
-# [[gateway.models]]
-# name = "custom-model"
-# provider = "openai"
-# base_url = "https://example.com/v1"
-# api_key = "${CUSTOM_API_KEY}"
-# cost_per_1m_input = 1.0
-# cost_per_1m_output = 2.0
-# capability = { reasoning = 0.6, coding = 0.8, creative = 0.5, knowledge = 0.7, speed_ms = 200 }
-# tags = ["custom"]
-
 # ── Classifier ──
 [gateway.classifier]
 model = "deepseek-v4-flash"   # lightweight model for classification
 timeout_ms = 2000
 
-# ── SHG ──
+# ── SHG (Short-Hard-Guard): skip classifier for short, obviously-hard prompts ──
 [gateway.shg]
 enabled = true
 prompt_len_threshold = 200
 hard_patterns = [
     "时间复杂度",
     "formal proof",
-    "prove",
     "security audit",
     "cryptograph",
     "distributed consensus",

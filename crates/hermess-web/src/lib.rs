@@ -93,8 +93,12 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-fn default_host() -> String { "0.0.0.0".into() }
-fn default_port() -> u16 { 8080 }
+fn default_host() -> String {
+    "0.0.0.0".into()
+}
+fn default_port() -> u16 {
+    8080
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LlmConfig {
@@ -142,9 +146,15 @@ impl Default for QdrantConfig {
     }
 }
 
-fn default_qdrant_url() -> String { "http://localhost:6334".into() }
-fn default_collection() -> String { "hermes_memory".into() }
-fn default_embedding_dim() -> usize { 1024 }
+fn default_qdrant_url() -> String {
+    "http://localhost:6334".into()
+}
+fn default_collection() -> String {
+    "hermes_memory".into()
+}
+fn default_embedding_dim() -> usize {
+    1024
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchConfig {
@@ -156,7 +166,10 @@ pub struct SearchConfig {
 
 impl Default for SearchConfig {
     fn default() -> Self {
-        Self { api_key: None, endpoint: default_search_endpoint() }
+        Self {
+            api_key: None,
+            endpoint: default_search_endpoint(),
+        }
     }
 }
 
@@ -187,7 +200,15 @@ impl Default for ScorerConfig {
     }
 }
 
-fn default_success_weight() -> f64 { 0.6 }
-fn default_latency_weight() -> f64 { 0.2 }
-fn default_quality_weight() -> f64 { 0.2 }
-fn default_latency_target() -> u64 { 2000 }
+fn default_success_weight() -> f64 {
+    0.6
+}
+fn default_latency_weight() -> f64 {
+    0.2
+}
+fn default_quality_weight() -> f64 {
+    0.2
+}
+fn default_latency_target() -> u64 {
+    2000
+}

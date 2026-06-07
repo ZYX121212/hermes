@@ -40,9 +40,15 @@ impl Tool for ReadFileTool {
         match tokio::fs::read_to_string(path).await {
             Ok(content) => {
                 let truncated = if content.len() > 10000 {
+                    let end = content
+                        .char_indices()
+                        .take_while(|&(i, _)| i < 10000)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(0);
                     format!(
                         "{}...\n[truncated, {} bytes total]",
-                        &content[..10000],
+                        &content[..end],
                         content.len()
                     )
                 } else {

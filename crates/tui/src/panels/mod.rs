@@ -1,15 +1,15 @@
+pub mod context_ref;
 pub mod evolution;
 pub mod execution;
 pub mod footer;
 pub mod header;
 pub mod help;
 pub mod input;
+pub mod kanban;
 pub mod log;
 pub mod overlay;
 pub mod plan;
 pub mod results;
 pub mod settings;
-pub mod context_ref;
-pub mod kanban;
 pub mod slash_command;
 pub mod tab_bar;

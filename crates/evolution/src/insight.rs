@@ -29,11 +29,17 @@ impl InsightStats {
         }
         self.avg_score =
             (self.avg_score * (self.total - 1) as f64 + insight.score) / self.total as f64;
-        if insight.score > self.best_score {
+        // On the first insight, initialize best/worst unconditionally
+        if self.total == 1 {
             self.best_score = insight.score;
-        }
-        if insight.score < self.worst_score {
             self.worst_score = insight.score;
+        } else {
+            if insight.score > self.best_score {
+                self.best_score = insight.score;
+            }
+            if insight.score < self.worst_score {
+                self.worst_score = insight.score;
+            }
         }
     }
 

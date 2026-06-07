@@ -241,12 +241,19 @@ pub fn render_evolution(frame: &mut Frame, area: Rect, state: &TuiAppState, focu
     let para = Paragraph::new(lines)
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
-        .scroll((clamp_scroll(state.evo_scroll, content_height, viewport_h), 0));
+        .scroll((
+            clamp_scroll(state.evo_scroll, content_height, viewport_h),
+            0,
+        ));
 
     frame.render_widget(para, area);
 
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(clamp_scroll(state.evo_scroll, content_height, viewport_h), content_height, viewport_h);
+        let bar = render_scrollbar(
+            clamp_scroll(state.evo_scroll, content_height, viewport_h),
+            content_height,
+            viewport_h,
+        );
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

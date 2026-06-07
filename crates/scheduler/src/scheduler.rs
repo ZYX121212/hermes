@@ -11,14 +11,19 @@ use tools::ToolRegistry;
 use uuid::Uuid;
 
 use crate::concurrency::ConcurrencyLimit;
+use crate::subagent::SubAgentRunner;
 
 /// Scheduler that executes a Plan's steps respecting the DAG dependency order.
 /// Steps in the same topological layer run concurrently.
+/// When a step is marked `delegable`, it dispatches to a sub-agent instead of
+/// calling a tool directly.
 pub struct Scheduler {
     registry: Arc<ToolRegistry>,
     concurrency: ConcurrencyLimit,
     event_tx: Option<UnboundedSender<AgentEvent>>,
     max_retries: usize,
+    /// Optional sub-agent runner for delegable steps.
+    subagent_runner: Option<Arc<dyn SubAgentRunner>>,
 }
 
 impl Scheduler {
@@ -28,12 +33,19 @@ impl Scheduler {
             concurrency: ConcurrencyLimit::new(max_concurrent),
             event_tx: None,
             max_retries: 3,
+            subagent_runner: None,
         }
     }
 
     /// Set the maximum number of retries per step (default: 3).
     pub fn with_max_retries(mut self, n: usize) -> Self {
         self.max_retries = n;
+        self
+    }
+
+    /// Enable sub-agent delegation for steps marked `delegable`.
+    pub fn with_subagent_runner(mut self, runner: Arc<dyn SubAgentRunner>) -> Self {
+        self.subagent_runner = Some(runner);
         self
     }
 
@@ -80,6 +92,7 @@ impl Scheduler {
                     let step_index = step_index.clone();
                     let max_retries = self.max_retries;
                     let tool_candidates = step.tool_candidates.clone();
+                    let subagent_runner = self.subagent_runner.clone();
                     async move {
                         // Resolve {{step_N.output}} references in args
                         step.args = resolve_args(&step.args, &step_index, &visible);
@@ -106,45 +119,104 @@ impl Scheduler {
                             }
                         };
                         let step_start = Instant::now();
-                        let out = registry.call(&step.tool, step.args.clone()).await;
-                        let duration = step_start.elapsed().as_millis() as u64;
-                        let step_out = match out {
-                            Ok(tool_out) => agent_core::StepOutput {
-                                step_id: step.id,
-                                tool: step.tool.clone(),
-                                success: tool_out.success,
-                                content: tool_out.content,
-                                duration_ms: duration,
-                            },
-                            Err(e) => {
-                                let err_msg = format!("{e}");
-                                let error_category = if err_msg.contains("not found")
-                                    || err_msg.contains("Tool not found")
-                                {
-                                    "tool_not_found"
-                                } else {
-                                    "tool_error"
-                                };
-                                tracing::warn!(
-                                    tool = %step.tool,
-                                    step_id = %step.id,
-                                    category = error_category,
-                                    error = %err_msg,
-                                    "Step execution failed"
+                        // Delegable steps are dispatched to a sub-agent for
+                        // autonomous reasoning rather than a direct tool call.
+                        let step_out = if step.delegable {
+                            if let Some(ref runner) = subagent_runner {
+                                let task_desc = format!(
+                                    "工具: {}\n参数: {}",
+                                    step.tool,
+                                    serde_json::to_string_pretty(&step.args).unwrap_or_default()
                                 );
+                                if let Some(ref tx) = tx {
+                                    let _ = tx.send(AgentEvent::SubAgentStarted {
+                                        task: task_desc.clone(),
+                                    });
+                                }
+                                match runner.run(&task_desc).await {
+                                    Ok(output) => {
+                                        if let Some(ref tx) = tx {
+                                            let _ = tx.send(AgentEvent::SubAgentCompleted {
+                                                task: task_desc,
+                                                summary: output.summary.clone(),
+                                            });
+                                        }
+                                        agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: output.success,
+                                            content: output.summary,
+                                            duration_ms: output.duration_ms,
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if let Some(ref tx) = tx {
+                                            let _ = tx.send(AgentEvent::SubAgentCompleted {
+                                                task: task_desc,
+                                                summary: format!("失败: {e:#}"),
+                                            });
+                                        }
+                                        agent_core::StepOutput {
+                                            step_id: step.id,
+                                            tool: step.tool.clone(),
+                                            success: false,
+                                            content: format!("子Agent执行失败: {e:#}"),
+                                            duration_ms: step_start.elapsed().as_millis() as u64,
+                                        }
+                                    }
+                                }
+                            } else {
                                 agent_core::StepOutput {
                                     step_id: step.id,
                                     tool: step.tool.clone(),
                                     success: false,
-                                    content: err_msg,
+                                    content: "delegable step but no SubAgentRunner configured"
+                                        .into(),
+                                    duration_ms: 0,
+                                }
+                            }
+                        } else {
+                            let out = registry.call(&step.tool, step.args.clone()).await;
+                            let duration = step_start.elapsed().as_millis() as u64;
+                            match out {
+                                Ok(tool_out) => agent_core::StepOutput {
+                                    step_id: step.id,
+                                    tool: step.tool.clone(),
+                                    success: tool_out.success,
+                                    content: tool_out.content,
                                     duration_ms: duration,
+                                },
+                                Err(e) => {
+                                    let err_msg = format!("{e}");
+                                    let error_category = if err_msg.contains("not found")
+                                        || err_msg.contains("Tool not found")
+                                    {
+                                        "tool_not_found"
+                                    } else {
+                                        "tool_error"
+                                    };
+                                    tracing::warn!(
+                                        tool = %step.tool,
+                                        step_id = %step.id,
+                                        category = error_category,
+                                        error = %err_msg,
+                                        "Step execution failed"
+                                    );
+                                    agent_core::StepOutput {
+                                        step_id: step.id,
+                                        tool: step.tool.clone(),
+                                        success: false,
+                                        content: err_msg,
+                                        duration_ms: duration,
+                                    }
                                 }
                             }
                         };
 
-                        // Retry loop with configurable max_retries, then fallback tools
-                        let final_output = if !step_out.success {
-                            let mut total_dur = duration;
+                        // Retry/fallback only for non-delegable tool steps.
+                        // Delegable steps are handled entirely by the sub-agent.
+                        let final_output = if !step_out.success && !step.delegable {
+                            let mut total_dur = step_out.duration_ms;
                             let mut last_out = step_out;
 
                             // Retry primary tool up to max_retries times
@@ -152,7 +224,10 @@ impl Scheduler {
                                 let mut retry_args = step.args.clone();
                                 if let Some(obj) = retry_args.as_object_mut() {
                                     obj.insert("_retry".into(), serde_json::json!(true));
-                                    obj.insert("_previous_error".into(), serde_json::json!(last_out.content));
+                                    obj.insert(
+                                        "_previous_error".into(),
+                                        serde_json::json!(last_out.content),
+                                    );
                                 }
                                 let _permit = match concurrency.acquire().await {
                                     Ok(p) => p,
@@ -220,7 +295,8 @@ impl Scheduler {
                                         }
                                     };
                                     let c_start = Instant::now();
-                                    let c_out = registry.call(candidate_tool, step.args.clone()).await;
+                                    let c_out =
+                                        registry.call(candidate_tool, step.args.clone()).await;
                                     let c_dur = c_start.elapsed().as_millis() as u64;
                                     total_dur += c_dur;
                                     match c_out {
@@ -293,6 +369,7 @@ impl Scheduler {
             outputs: all_outputs,
             success: all_succeeded,
             duration_ms: start.elapsed().as_millis() as u64,
+            user_input: None,
         })
     }
 

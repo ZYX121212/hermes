@@ -40,6 +40,8 @@ mod tests {
             args: serde_json::json!({"cmd": "test"}),
             depends,
             candidates: vec!["fast".into()],
+            tool_candidates: vec![],
+            delegable: false,
         }
     }
 

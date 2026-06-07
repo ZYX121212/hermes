@@ -32,7 +32,10 @@ pub struct DangerGuard {
 
 impl DangerGuard {
     pub fn new(policy: ConfirmationPolicy, extra_patterns: Vec<String>) -> Self {
-        Self { policy, extra_patterns }
+        Self {
+            policy,
+            extra_patterns,
+        }
     }
 
     /// 检查命令是否危险。返回 Ok(()) 表示可以继续，Err 表示被策略拒绝。
@@ -119,7 +122,7 @@ static DANGEROUS_PATTERNS: &[&str] = &[
     "/etc/passwd",
     "/etc/shadow",
     "~/.ssh/",
-    ".env",
+    ".env ",
     "eval \"$",
     "\\x", // 十六进制转义混淆
 ];

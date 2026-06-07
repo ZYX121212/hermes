@@ -6,6 +6,8 @@ use std::path::Path;
 use agent_core::MemoryStore;
 use llm::LlmAdapter;
 
+use crate::dedup::{self, DedupConfig};
+
 /// Maximum file size to process (1 MB).
 const MAX_FILE_SIZE: u64 = 1_024 * 1_024;
 /// Maximum chunk size in characters.
@@ -53,8 +55,22 @@ pub async fn preload_knowledge_base(
             continue;
         }
 
-        let chunks = chunk_text(&content, MAX_CHUNK_CHARS);
-        stats.chunks_created += chunks.len();
+        let raw_chunks = chunk_text(&content, MAX_CHUNK_CHARS);
+        stats.chunks_created += raw_chunks.len();
+
+        let dedup_config = DedupConfig::default();
+        let (chunks, dedup_stats) = dedup::deduplicate_chunks(raw_chunks, &dedup_config);
+        stats.chunks_deduped += dedup_stats.removed_chunks;
+
+        if dedup_stats.removed_chunks > 0 {
+            tracing::debug!(
+                file = %rel.display(),
+                input = dedup_stats.input_chunks,
+                kept = dedup_stats.kept_chunks,
+                removed = dedup_stats.removed_chunks,
+                "Chunk dedup"
+            );
+        }
 
         for chunk in chunks {
             on_progress(format!("嵌入: {} ({} 字符)", rel.display(), chunk.len()));
@@ -73,6 +89,7 @@ pub async fn preload_knowledge_base(
                 content: format!("[来源: {}] {}", rel.display(), chunk),
                 embedding,
                 timestamp: chrono::Utc::now(),
+                importance: 1.0,
             };
 
             if let Err(e) = store.upsert(memory_chunk).await {
@@ -101,6 +118,7 @@ pub struct KnowledgeBaseStats {
     pub files_found: usize,
     pub files_skipped: usize,
     pub chunks_created: usize,
+    pub chunks_deduped: usize,
     pub chunks_upserted: usize,
     pub chunks_failed: usize,
 }
@@ -116,7 +134,11 @@ fn collect_text_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             // Skip hidden directories
-            if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')) {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'))
+            {
                 continue;
             }
             collect_text_files(&path, out);
@@ -129,17 +151,21 @@ fn collect_text_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 /// Heuristic: only process files with text-like extensions or no extension.
 fn should_process(path: &Path) -> bool {
     // Skip files that are too large
-    if path.metadata().map(|m| m.len() > MAX_FILE_SIZE).unwrap_or(true) {
+    if path
+        .metadata()
+        .map(|m| m.len() > MAX_FILE_SIZE)
+        .unwrap_or(true)
+    {
         return false;
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext {
-        "txt" | "md" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "java"
-        | "c" | "cpp" | "h" | "hpp" | "rb" | "sh" | "bash" | "zsh" | "yaml" | "yml"
-        | "toml" | "json" | "xml" | "html" | "css" | "scss" | "sql" | "r" | "lua"
-        | "swift" | "kt" | "scala" | "clj" | "ex" | "exs" | "erl" | "hrl" | "hs"
-        | "elm" | "vue" | "svelte" | "astro" | "csv" | "log" | "ini" | "cfg"
-        | "conf" | "env" | "make" | "cmake" | "dockerfile" | "gitignore" => true,
+        "txt" | "md" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "java" | "c" | "cpp"
+        | "h" | "hpp" | "rb" | "sh" | "bash" | "zsh" | "yaml" | "yml" | "toml" | "json" | "xml"
+        | "html" | "css" | "scss" | "sql" | "r" | "lua" | "swift" | "kt" | "scala" | "clj"
+        | "ex" | "exs" | "erl" | "hrl" | "hs" | "elm" | "vue" | "svelte" | "astro" | "csv"
+        | "log" | "ini" | "cfg" | "conf" | "env" | "make" | "cmake" | "dockerfile"
+        | "gitignore" => true,
         "" => true, // no extension, might be text
         _ => false,
     }
@@ -150,7 +176,10 @@ fn is_binary(data: &[u8]) -> bool {
     if data.is_empty() {
         return true;
     }
-    let non_utf8 = data.iter().filter(|&&b| b == 0 || ((0x80..0xC0).contains(&b) && b >= 0xF5)).count();
+    let non_utf8 = data
+        .iter()
+        .filter(|&&b| b == 0 || (0x80..0xC0).contains(&b) || b >= 0xF5)
+        .count();
     (non_utf8 as f64 / data.len() as f64) > BINARY_THRESHOLD
 }
 
@@ -197,12 +226,21 @@ fn find_split_point(text: &str, target: usize) -> usize {
     if target >= text.len() {
         return text.len();
     }
+    let mut split_at = target;
     // Look for sentence-ending punctuation near the target
     for &pat in &['.', '!', '?', '\n', ';'] {
         if let Some(pos) = text[..target].rfind(pat) {
-            return pos + 1;
+            split_at = pos + 1;
+            break;
         }
     }
-    // Fall back to the last space
-    text[..target].rfind(' ').map(|p| p + 1).unwrap_or(target)
+    // Fall back to the last space if no sentence boundary found
+    if split_at == target {
+        split_at = text[..target].rfind(' ').map(|p| p + 1).unwrap_or(target);
+    }
+    // Walk backward to ensure we're at a valid UTF-8 char boundary
+    while split_at > 0 && !text.is_char_boundary(split_at) {
+        split_at -= 1;
+    }
+    split_at
 }

@@ -10,6 +10,34 @@ use dashmap::DashMap;
 use crate::insight::InsightStats;
 use crate::weight::{adaptive_lr, clamp};
 
+/// Per-tool execution statistics for reliability-based planning.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ToolStat {
+    pub successes: u64,
+    pub failures: u64,
+    pub total_latency_ms: u64,
+}
+
+impl ToolStat {
+    /// Reliability score in [0.0, 1.0]. Uses Laplace smoothing (start at 0.5).
+    pub fn reliability(&self) -> f64 {
+        let total = self.successes + self.failures;
+        if total == 0 {
+            return 0.5; // unknown → neutral
+        }
+        // Laplace smoothing: (s + 1) / (n + 2), starts at 0.5 for n=0
+        (self.successes as f64 + 1.0) / (total as f64 + 2.0)
+    }
+
+    pub fn avg_latency_ms(&self) -> f64 {
+        let total = self.successes + self.failures;
+        if total == 0 {
+            return 0.0;
+        }
+        self.total_latency_ms as f64 / total as f64
+    }
+}
+
 /// Core evolution engine: manages strategy weights lock-free
 /// and persists insights to long-term memory asynchronously.
 ///
@@ -24,12 +52,18 @@ use crate::weight::{adaptive_lr, clamp};
 pub struct EvolutionEngine {
     /// Strategy ID -> weight score (lock-free concurrent HashMap).
     strategy_weights: Arc<DashMap<String, f64>>,
+    /// Per-tool execution statistics for reliability-based planning.
+    tool_stats: Arc<DashMap<String, ToolStat>>,
     /// Long-term vector memory (Qdrant backed).
     memory_store: Arc<dyn MemoryStore>,
     /// Learning rate stored as f64 bits in an atomic u64 for lock-free access.
     learning_rate_bits: AtomicU64,
     /// Total number of insights processed (for adaptive learning-rate decay).
     insight_count: AtomicU64,
+    /// Count since last auto-save.
+    insights_since_save: AtomicU64,
+    /// Auto-save path (None = no auto-save).
+    auto_save_path: Option<String>,
     /// Accumulated statistics about insights.
     stats: parking_lot::RwLock<InsightStats>,
 }
@@ -38,11 +72,21 @@ impl EvolutionEngine {
     pub fn new(lr: f64, memory: Arc<dyn MemoryStore>) -> Self {
         Self {
             strategy_weights: Arc::new(DashMap::new()),
+            tool_stats: Arc::new(DashMap::new()),
             memory_store: memory,
             learning_rate_bits: AtomicU64::new(lr.to_bits()),
             insight_count: AtomicU64::new(0),
+            insights_since_save: AtomicU64::new(0),
+            auto_save_path: None,
             stats: parking_lot::RwLock::new(InsightStats::default()),
         }
+    }
+
+    /// Enable automatic periodic persistence to the given file path.
+    /// Saves after every 5 insights and on extreme scores.
+    pub fn with_auto_save(mut self, path: &str) -> Self {
+        self.auto_save_path = Some(path.to_string());
+        self
     }
 
     /// Perform a single evolution update: adjust strategy weight
@@ -93,6 +137,7 @@ impl EvolutionEngine {
             content: insight.lesson.clone(),
             embedding: insight.embedding.clone(),
             timestamp: chrono::Utc::now(),
+            importance: if insight.score < 0.0 { 1.5 } else { 1.0 },
         };
         let handle = tokio::spawn(async move {
             if let Err(e) = store.upsert(chunk).await {
@@ -108,7 +153,86 @@ impl EvolutionEngine {
             }
         });
 
+        // 5. Auto-save evolution state periodically (every 5 insights or extreme scores)
+        let since_save = self.insights_since_save.fetch_add(1, Ordering::Relaxed) + 1;
+        let should_save = since_save >= 5 || insight.score.abs() > 0.8;
+        if should_save {
+            if let Some(ref path) = self.auto_save_path {
+                self.insights_since_save.store(0, Ordering::Relaxed);
+                let path = path.clone();
+                let weights = self.strategy_weights.clone();
+                let tool_stats = self.tool_stats.clone();
+                let stats = self.stats.read().clone();
+                let insight_count = self.insight_count.load(Ordering::Relaxed);
+                let lr_bits = self.learning_rate_bits.load(Ordering::Relaxed);
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = Self::save_snapshot(
+                        &path,
+                        &weights,
+                        &tool_stats,
+                        &stats,
+                        insight_count,
+                        lr_bits,
+                    ) {
+                        tracing::warn!(error = %e, "auto-save evolution state failed");
+                    }
+                });
+            }
+        }
+
         Ok(())
+    }
+
+    /// Search long-term memory for insights relevant to the given query.
+    pub async fn search_memory(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> anyhow::Result<Vec<agent_core::MemoryChunk>> {
+        self.memory_store.search(query, k).await
+    }
+
+    /// Record a tool execution result for reliability tracking.
+    /// Called by the agent after each step completes.
+    pub fn record_tool_result(&self, tool: &str, success: bool, duration_ms: u64) {
+        use dashmap::mapref::entry::Entry;
+        match self.tool_stats.entry(tool.to_string()) {
+            Entry::Occupied(mut e) => {
+                let s = e.get_mut();
+                if success {
+                    s.successes += 1;
+                } else {
+                    s.failures += 1;
+                }
+                s.total_latency_ms += duration_ms;
+            }
+            Entry::Vacant(e) => {
+                e.insert(ToolStat {
+                    successes: if success { 1 } else { 0 },
+                    failures: if success { 0 } else { 1 },
+                    total_latency_ms: duration_ms,
+                });
+            }
+        }
+    }
+
+    /// Get the reliability score for a specific tool (0.0–1.0).
+    /// Returns None if the tool has never been executed.
+    pub fn tool_reliability(&self, tool: &str) -> Option<f64> {
+        self.tool_stats.get(tool).map(|s| s.reliability())
+    }
+
+    /// Get the average latency for a specific tool in milliseconds.
+    pub fn tool_avg_latency(&self, tool: &str) -> Option<f64> {
+        self.tool_stats.get(tool).map(|s| s.avg_latency_ms())
+    }
+
+    /// Get all tool stats for debugging/display.
+    pub fn all_tool_stats(&self) -> Vec<(String, ToolStat)> {
+        self.tool_stats
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
     }
 
     /// Query the best strategy from a set of candidates based on learned weights.
@@ -161,18 +285,50 @@ impl EvolutionEngine {
 
     /// Save evolution state to a JSON file.
     pub fn save_to_file(&self, path: &str) -> anyhow::Result<()> {
-        let weights: serde_json::Value = self
-            .strategy_weights
+        Self::save_snapshot(
+            path,
+            &self.strategy_weights,
+            &self.tool_stats,
+            &self.stats.read(),
+            self.insight_count.load(Ordering::Relaxed),
+            self.learning_rate_bits.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Static helper used by both manual and auto-save paths.
+    fn save_snapshot(
+        path: &str,
+        weights: &DashMap<String, f64>,
+        tool_stats: &DashMap<String, ToolStat>,
+        stats: &InsightStats,
+        insight_count: u64,
+        lr_bits: u64,
+    ) -> anyhow::Result<()> {
+        let w: serde_json::Value = weights
             .iter()
             .map(|e| (e.key().clone(), serde_json::json!(*e.value())))
             .collect::<serde_json::Map<_, _>>()
             .into();
 
-        let stats = self.stats.read();
+        let tools: serde_json::Value = tool_stats
+            .iter()
+            .map(|e| {
+                let s = e.value();
+                serde_json::json!({
+                    "name": e.key().as_str(),
+                    "successes": s.successes,
+                    "failures": s.failures,
+                    "total_latency_ms": s.total_latency_ms,
+                })
+            })
+            .collect::<Vec<_>>()
+            .into();
+
         let state = serde_json::json!({
-            "strategy_weights": weights,
-            "insight_count": self.insight_count.load(Ordering::Relaxed),
-            "learning_rate": f64::from_bits(self.learning_rate_bits.load(Ordering::Relaxed)),
+            "strategy_weights": w,
+            "tool_stats": tools,
+            "insight_count": insight_count,
+            "learning_rate": f64::from_bits(lr_bits),
             "stats": {
                 "total": stats.total,
                 "positive": stats.positive,
@@ -184,11 +340,15 @@ impl EvolutionEngine {
         });
 
         std::fs::write(path, serde_json::to_string_pretty(&state)?)?;
-        tracing::info!("Evolution state saved to {path}");
+        tracing::debug!(
+            "Evolution state saved to {path} ({} strategies, {} insights)",
+            weights.len(),
+            insight_count
+        );
         Ok(())
     }
 
-    /// Load evolution state from a JSON file, restoring weights and counters.
+    /// Load evolution state from a JSON file, restoring weights, tool stats, and counters.
     pub fn load_from_file(
         path: &str,
         lr: f64,
@@ -203,6 +363,29 @@ impl EvolutionEngine {
             for (k, v) in weights {
                 if let Some(w) = v.as_f64() {
                     engine.strategy_weights.insert(k.clone(), w);
+                }
+            }
+        }
+
+        // Restore tool stats
+        if let Some(tools) = state["tool_stats"].as_array() {
+            for t in tools {
+                if let (Some(name), Some(successes), Some(failures)) = (
+                    t.get("name").and_then(|v| v.as_str()),
+                    t.get("successes").and_then(|v| v.as_u64()),
+                    t.get("failures").and_then(|v| v.as_u64()),
+                ) {
+                    engine.tool_stats.insert(
+                        name.to_string(),
+                        ToolStat {
+                            successes,
+                            failures,
+                            total_latency_ms: t
+                                .get("total_latency_ms")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                        },
+                    );
                 }
             }
         }
@@ -231,8 +414,9 @@ impl EvolutionEngine {
         }
 
         tracing::info!(
-            "Loaded evolution state from {path}: {} strategies, {} insights",
+            "Loaded evolution state from {path}: {} strategies, {} tools, {} insights",
             engine.strategy_count(),
+            engine.tool_stats.len(),
             engine.insight_count.load(Ordering::Relaxed)
         );
         Ok(engine)

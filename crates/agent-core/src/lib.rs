@@ -23,7 +23,9 @@ pub struct MemoryChunk {
     pub importance: f64,
 }
 
-fn default_importance() -> f64 { 1.0 }
+fn default_importance() -> f64 {
+    1.0
+}
 
 /// User input combined with environment snapshot and relevant history.
 #[derive(Debug, Clone, Serialize, Deserialize)]

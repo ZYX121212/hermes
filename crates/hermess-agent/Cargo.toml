@@ -1,6 +1,8 @@
 [package]
 name = "hermess-agent"
 version = "0.1.0"
+description = "Default agent implementation with five-phase self-evolution loop"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
@@ -12,6 +14,7 @@ evolution = { path = "../evolution" }
 memory = { path = "../memory" }
 llm = { path = "../llm" }
 tui = { path = "../tui", optional = true }
+tools = { path = "../tools" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

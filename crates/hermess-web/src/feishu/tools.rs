@@ -23,7 +23,9 @@ impl FeishuWikiTool {
 
 #[async_trait]
 impl Tool for FeishuWikiTool {
-    fn name(&self) -> &str { "feishu_wiki" }
+    fn name(&self) -> &str {
+        "feishu_wiki"
+    }
 
     fn description(&self) -> &str {
         "飞书知识库操作：列出空间、搜索内容、读写节点。支持 operation: list_spaces, get_space_detail, get_node_tree, get_node_content, create_node, update_node, search_wiki"
@@ -82,7 +84,9 @@ impl Tool for FeishuWikiTool {
                 let parent = get_str(&args, "parent_node_token")?;
                 let title = get_str(&args, "title")?;
                 let content = args["content"].as_str().unwrap_or("");
-                let result = client.create_wiki_node(space_id, parent, title, content).await?;
+                let result = client
+                    .create_wiki_node(space_id, parent, title, content)
+                    .await?;
                 Ok(ToolOutput::text(serde_json::to_string_pretty(&result)?))
             }
             "update_node" => {
@@ -94,9 +98,11 @@ impl Tool for FeishuWikiTool {
             }
             "search_wiki" => {
                 let query = get_str(&args, "query")?;
-                let space_ids: Option<Vec<String>> = args["space_ids"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                let space_ids: Option<Vec<String>> = args["space_ids"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
                 let result = client.search_wiki(query, space_ids.as_deref()).await?;
                 Ok(ToolOutput::text(serde_json::to_string_pretty(&result)?))
             }
@@ -112,12 +118,16 @@ pub struct FeishuDocsTool {
 }
 
 impl FeishuDocsTool {
-    pub fn new(client: Arc<RwLock<Arc<FeishuClient>>>) -> Self { Self { client } }
+    pub fn new(client: Arc<RwLock<Arc<FeishuClient>>>) -> Self {
+        Self { client }
+    }
 }
 
 #[async_trait]
 impl Tool for FeishuDocsTool {
-    fn name(&self) -> &str { "feishu_docs" }
+    fn name(&self) -> &str {
+        "feishu_docs"
+    }
 
     fn description(&self) -> &str {
         "飞书文档操作：读写 Doc 文档。支持 operation: get_document, create_document, get_document_blocks, append_blocks, update_block"
@@ -157,7 +167,9 @@ impl Tool for FeishuDocsTool {
                 let title = get_str(&args, "title")?;
                 let folder_token = args["folder_token"].as_str();
                 let doc_token = client.create_document(title, folder_token).await?;
-                Ok(ToolOutput::text(format!("文档创建成功\ndoc_token: {doc_token}")))
+                Ok(ToolOutput::text(format!(
+                    "文档创建成功\ndoc_token: {doc_token}"
+                )))
             }
             "get_document_blocks" => {
                 let doc_token = get_str(&args, "doc_token")?;
@@ -168,14 +180,18 @@ impl Tool for FeishuDocsTool {
                 let doc_token = get_str(&args, "doc_token")?;
                 let block_id = get_str(&args, "block_id")?;
                 let blocks = &args["blocks"];
-                let result = client.append_document_blocks(doc_token, block_id, blocks).await?;
+                let result = client
+                    .append_document_blocks(doc_token, block_id, blocks)
+                    .await?;
                 Ok(ToolOutput::text(serde_json::to_string_pretty(&result)?))
             }
             "update_block" => {
                 let doc_token = get_str(&args, "doc_token")?;
                 let block_id = get_str(&args, "block_id")?;
                 let update = &args["update"];
-                let result = client.update_document_block(doc_token, block_id, update).await?;
+                let result = client
+                    .update_document_block(doc_token, block_id, update)
+                    .await?;
                 Ok(ToolOutput::text(serde_json::to_string_pretty(&result)?))
             }
             _ => Ok(ToolOutput::error(format!("未知操作: {op}"))),
@@ -190,12 +206,16 @@ pub struct FeishuDriveTool {
 }
 
 impl FeishuDriveTool {
-    pub fn new(client: Arc<RwLock<Arc<FeishuClient>>>) -> Self { Self { client } }
+    pub fn new(client: Arc<RwLock<Arc<FeishuClient>>>) -> Self {
+        Self { client }
+    }
 }
 
 #[async_trait]
 impl Tool for FeishuDriveTool {
-    fn name(&self) -> &str { "feishu_drive" }
+    fn name(&self) -> &str {
+        "feishu_drive"
+    }
 
     fn description(&self) -> &str {
         "飞书云盘操作：文件上传/下载/列表/删除。支持 operation: list_files, upload_file, download_file, get_file_info, delete_file"
@@ -236,17 +256,21 @@ impl Tool for FeishuDriveTool {
             "upload_file" => {
                 let folder_token = get_str(&args, "folder_token")?;
                 let file_path = get_str(&args, "file_path")?;
-                let file_name = args["file_name"]
-                    .as_str()
-                    .unwrap_or_else(|| std::path::Path::new(file_path)
+                let file_name = args["file_name"].as_str().unwrap_or_else(|| {
+                    std::path::Path::new(file_path)
                         .file_name()
                         .and_then(|n| n.to_str())
-                        .unwrap_or("unknown"));
-                let mime_type = args["mime_type"].as_str().unwrap_or("application/octet-stream");
-                let data = tokio::fs::read(file_path).await.map_err(|e| {
-                    anyhow::anyhow!("无法读取文件 {file_path}: {e}")
-                })?;
-                let ft = client.upload_drive_file(folder_token, file_name, data, mime_type).await?;
+                        .unwrap_or("unknown")
+                });
+                let mime_type = args["mime_type"]
+                    .as_str()
+                    .unwrap_or("application/octet-stream");
+                let data = tokio::fs::read(file_path)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("无法读取文件 {file_path}: {e}"))?;
+                let ft = client
+                    .upload_drive_file(folder_token, file_name, data, mime_type)
+                    .await?;
                 Ok(ToolOutput::text(format!("文件上传成功\nfile_token: {ft}")))
             }
             "download_file" => {
@@ -255,12 +279,16 @@ impl Tool for FeishuDriveTool {
                 let data = client.download_drive_file(file_token).await?;
                 let size = data.len();
                 if let Some(path) = file_path {
-                    tokio::fs::write(path, &data).await.map_err(|e| {
-                        anyhow::anyhow!("无法写入文件 {path}: {e}")
-                    })?;
-                    Ok(ToolOutput::text(format!("文件下载成功\n大小: {size} bytes\n已保存到: {path}")))
+                    tokio::fs::write(path, &data)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("无法写入文件 {path}: {e}"))?;
+                    Ok(ToolOutput::text(format!(
+                        "文件下载成功\n大小: {size} bytes\n已保存到: {path}"
+                    )))
                 } else {
-                    Ok(ToolOutput::text(format!("文件下载成功\n大小: {size} bytes\n请指定 file_path 参数来保存到本地文件")))
+                    Ok(ToolOutput::text(format!(
+                        "文件下载成功\n大小: {size} bytes\n请指定 file_path 参数来保存到本地文件"
+                    )))
                 }
             }
             "get_file_info" => {
@@ -293,7 +321,10 @@ mod tests {
 
     #[test]
     fn test_wiki_tool_schema() {
-        let client = Arc::new(RwLock::new(FeishuClient::new("app".into(), "secret".into())));
+        let client = Arc::new(RwLock::new(FeishuClient::new(
+            "app".into(),
+            "secret".into(),
+        )));
         let tool = FeishuWikiTool::new(client);
         assert_eq!(tool.name(), "feishu_wiki");
         let schema = tool.schema();
@@ -302,7 +333,10 @@ mod tests {
 
     #[test]
     fn test_docs_tool_schema() {
-        let client = Arc::new(RwLock::new(FeishuClient::new("app".into(), "secret".into())));
+        let client = Arc::new(RwLock::new(FeishuClient::new(
+            "app".into(),
+            "secret".into(),
+        )));
         let tool = FeishuDocsTool::new(client);
         let schema = tool.schema();
         assert_eq!(schema["required"][0].as_str().unwrap(), "operation");
@@ -310,7 +344,10 @@ mod tests {
 
     #[test]
     fn test_drive_tool_schema() {
-        let client = Arc::new(RwLock::new(FeishuClient::new("app".into(), "secret".into())));
+        let client = Arc::new(RwLock::new(FeishuClient::new(
+            "app".into(),
+            "secret".into(),
+        )));
         let tool = FeishuDriveTool::new(client);
         assert_eq!(tool.name(), "feishu_drive");
     }

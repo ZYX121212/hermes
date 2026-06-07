@@ -53,7 +53,9 @@ fn default_colors() -> ThemeColors {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self { colors: default_colors() }
+        Self {
+            colors: default_colors(),
+        }
     }
 }
 
@@ -83,36 +85,57 @@ impl Theme {
         match name {
             "dracula" => Self {
                 colors: ThemeColors {
-                    bg: "#282a36".into(), panel: "#2c2f3e".into(),
-                    panel_alt: "#353849".into(), border: "#6272a4".into(),
-                    border_focused: "#bd93f9".into(), text: "#f8f8f2".into(),
-                    muted: "#a0a0b0".into(), subtle: "#6272a4".into(),
-                    cyan: "#8be9fd".into(), blue: "#6272a4".into(),
-                    green: "#50fa7b".into(), yellow: "#f1fa8c".into(),
-                    red: "#ff5555".into(), magenta: "#ff79c6".into(),
-                }
+                    bg: "#282a36".into(),
+                    panel: "#2c2f3e".into(),
+                    panel_alt: "#353849".into(),
+                    border: "#6272a4".into(),
+                    border_focused: "#bd93f9".into(),
+                    text: "#f8f8f2".into(),
+                    muted: "#a0a0b0".into(),
+                    subtle: "#6272a4".into(),
+                    cyan: "#8be9fd".into(),
+                    blue: "#6272a4".into(),
+                    green: "#50fa7b".into(),
+                    yellow: "#f1fa8c".into(),
+                    red: "#ff5555".into(),
+                    magenta: "#ff79c6".into(),
+                },
             },
             "solarized-dark" => Self {
                 colors: ThemeColors {
-                    bg: "#002b36".into(), panel: "#073642".into(),
-                    panel_alt: "#0a4b57".into(), border: "#586e75".into(),
-                    border_focused: "#268bd2".into(), text: "#839496".into(),
-                    muted: "#586e75".into(), subtle: "#657b83".into(),
-                    cyan: "#2aa198".into(), blue: "#268bd2".into(),
-                    green: "#859900".into(), yellow: "#b58900".into(),
-                    red: "#dc322f".into(), magenta: "#d33682".into(),
-                }
+                    bg: "#002b36".into(),
+                    panel: "#073642".into(),
+                    panel_alt: "#0a4b57".into(),
+                    border: "#586e75".into(),
+                    border_focused: "#268bd2".into(),
+                    text: "#839496".into(),
+                    muted: "#586e75".into(),
+                    subtle: "#657b83".into(),
+                    cyan: "#2aa198".into(),
+                    blue: "#268bd2".into(),
+                    green: "#859900".into(),
+                    yellow: "#b58900".into(),
+                    red: "#dc322f".into(),
+                    magenta: "#d33682".into(),
+                },
             },
             "gruvbox" => Self {
                 colors: ThemeColors {
-                    bg: "#282828".into(), panel: "#32302f".into(),
-                    panel_alt: "#3c3836".into(), border: "#504945".into(),
-                    border_focused: "#83a598".into(), text: "#ebdbb2".into(),
-                    muted: "#a89984".into(), subtle: "#665c54".into(),
-                    cyan: "#83a598".into(), blue: "#458588".into(),
-                    green: "#b8bb26".into(), yellow: "#fabd2f".into(),
-                    red: "#fb4934".into(), magenta: "#d3869b".into(),
-                }
+                    bg: "#282828".into(),
+                    panel: "#32302f".into(),
+                    panel_alt: "#3c3836".into(),
+                    border: "#504945".into(),
+                    border_focused: "#83a598".into(),
+                    text: "#ebdbb2".into(),
+                    muted: "#a89984".into(),
+                    subtle: "#665c54".into(),
+                    cyan: "#83a598".into(),
+                    blue: "#458588".into(),
+                    green: "#b8bb26".into(),
+                    yellow: "#fabd2f".into(),
+                    red: "#fb4934".into(),
+                    magenta: "#d3869b".into(),
+                },
             },
             _ => Self::default(),
         }
@@ -133,20 +156,48 @@ impl Theme {
         Color::Rgb(r, g, b)
     }
 
-    pub fn bg(&self) -> Color { Self::parse(&self.colors.bg) }
-    pub fn panel(&self) -> Color { Self::parse(&self.colors.panel) }
-    pub fn panel_alt(&self) -> Color { Self::parse(&self.colors.panel_alt) }
-    pub fn border(&self) -> Color { Self::parse(&self.colors.border) }
-    pub fn border_focused(&self) -> Color { Self::parse(&self.colors.border_focused) }
-    pub fn text(&self) -> Color { Self::parse(&self.colors.text) }
-    pub fn muted(&self) -> Color { Self::parse(&self.colors.muted) }
-    pub fn subtle(&self) -> Color { Self::parse(&self.colors.subtle) }
-    pub fn cyan(&self) -> Color { Self::parse(&self.colors.cyan) }
-    pub fn blue(&self) -> Color { Self::parse(&self.colors.blue) }
-    pub fn green(&self) -> Color { Self::parse(&self.colors.green) }
-    pub fn yellow(&self) -> Color { Self::parse(&self.colors.yellow) }
-    pub fn red(&self) -> Color { Self::parse(&self.colors.red) }
-    pub fn magenta(&self) -> Color { Self::parse(&self.colors.magenta) }
+    pub fn bg(&self) -> Color {
+        Self::parse(&self.colors.bg)
+    }
+    pub fn panel(&self) -> Color {
+        Self::parse(&self.colors.panel)
+    }
+    pub fn panel_alt(&self) -> Color {
+        Self::parse(&self.colors.panel_alt)
+    }
+    pub fn border(&self) -> Color {
+        Self::parse(&self.colors.border)
+    }
+    pub fn border_focused(&self) -> Color {
+        Self::parse(&self.colors.border_focused)
+    }
+    pub fn text(&self) -> Color {
+        Self::parse(&self.colors.text)
+    }
+    pub fn muted(&self) -> Color {
+        Self::parse(&self.colors.muted)
+    }
+    pub fn subtle(&self) -> Color {
+        Self::parse(&self.colors.subtle)
+    }
+    pub fn cyan(&self) -> Color {
+        Self::parse(&self.colors.cyan)
+    }
+    pub fn blue(&self) -> Color {
+        Self::parse(&self.colors.blue)
+    }
+    pub fn green(&self) -> Color {
+        Self::parse(&self.colors.green)
+    }
+    pub fn yellow(&self) -> Color {
+        Self::parse(&self.colors.yellow)
+    }
+    pub fn red(&self) -> Color {
+        Self::parse(&self.colors.red)
+    }
+    pub fn magenta(&self) -> Color {
+        Self::parse(&self.colors.magenta)
+    }
 }
 
 // ── Global theme ──

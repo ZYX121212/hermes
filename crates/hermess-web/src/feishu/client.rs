@@ -58,7 +58,10 @@ impl FeishuClient {
 
         let resp = self
             .http
-            .post(format!("{}/open-apis/auth/v3/tenant_access_token/internal", OPEN_API_BASE))
+            .post(format!(
+                "{}/open-apis/auth/v3/tenant_access_token/internal",
+                OPEN_API_BASE
+            ))
             .json(&serde_json::json!({
                 "app_id": self.app_id,
                 "app_secret": self.app_secret,
@@ -75,7 +78,10 @@ impl FeishuClient {
             expire: Option<u64>,
         }
 
-        let tr: TokenResp = resp.json().await.context("failed to parse token response")?;
+        let tr: TokenResp = resp
+            .json()
+            .await
+            .context("failed to parse token response")?;
         if tr.code != 0 {
             bail!(
                 "get tenant_access_token failed: code={} msg={:?}",
@@ -118,12 +124,18 @@ impl FeishuClient {
             url: String,
         }
 
-        let wr: WsResp = resp.json().await.context("failed to parse ws url response")?;
+        let wr: WsResp = resp
+            .json()
+            .await
+            .context("failed to parse ws url response")?;
         if wr.code != 0 {
             bail!("get ws url failed: code={} msg={:?}", wr.code, wr.msg);
         }
 
-        let url = wr.data.ok_or_else(|| anyhow::anyhow!("ws url data missing"))?.url;
+        let url = wr
+            .data
+            .ok_or_else(|| anyhow::anyhow!("ws url data missing"))?
+            .url;
         tracing::info!(%url, "got ws url");
         Ok(url)
     }
@@ -154,7 +166,10 @@ impl FeishuClient {
             msg: Option<String>,
         }
 
-        let rr: ReplyResp = resp.json().await.context("failed to parse reply response")?;
+        let rr: ReplyResp = resp
+            .json()
+            .await
+            .context("failed to parse reply response")?;
         if rr.code != 0 {
             bail!("reply failed: code={} msg={:?}", rr.code, rr.msg);
         }
@@ -191,7 +206,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/wiki/v2/spaces/{space_id}", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/wiki/v2/spaces/{space_id}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
@@ -213,9 +231,17 @@ impl FeishuClient {
         }
         let resp = self
             .http
-            .get(format!("{}/open-apis/wiki/v2/spaces/{space_id}/nodes", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/wiki/v2/spaces/{space_id}/nodes",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
-            .query(&query.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>())
+            .query(
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_str()))
+                    .collect::<Vec<_>>(),
+            )
             .send()
             .await
             .context("failed to get wiki node tree")?;
@@ -228,14 +254,20 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/wiki/v2/spaces/-/nodes/{node_token}", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/wiki/v2/spaces/-/nodes/{node_token}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
             .context("failed to get wiki node")?;
         let body: serde_json::Value = resp.json().await?;
         check_feishu_code(&body)?;
-        let content = body["data"]["node"]["content"].as_str().unwrap_or("").to_string();
+        let content = body["data"]["node"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         Ok(content)
     }
 
@@ -249,7 +281,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .post(format!("{}/open-apis/wiki/v2/spaces/{space_id}/nodes", OPEN_API_BASE))
+            .post(format!(
+                "{}/open-apis/wiki/v2/spaces/{space_id}/nodes",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
                 "parent_node_token": parent_node_token,
@@ -274,7 +309,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .put(format!("{}/open-apis/wiki/v2/spaces/-/nodes/{node_token}", OPEN_API_BASE))
+            .put(format!(
+                "{}/open-apis/wiki/v2/spaces/-/nodes/{node_token}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "title": title, "content": content }))
             .send()
@@ -314,18 +352,28 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/docx/v1/documents/{doc_token}", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/docx/v1/documents/{doc_token}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
             .context("failed to get document")?;
         let body: serde_json::Value = resp.json().await?;
         check_feishu_code(&body)?;
-        let content = body["data"]["document"]["content"].as_str().unwrap_or("").to_string();
+        let content = body["data"]["document"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         Ok(content)
     }
 
-    pub async fn create_document(&self, title: &str, folder_token: Option<&str>) -> anyhow::Result<String> {
+    pub async fn create_document(
+        &self,
+        title: &str,
+        folder_token: Option<&str>,
+    ) -> anyhow::Result<String> {
         let token = self.get_tenant_access_token().await?;
         let mut json = serde_json::json!({ "title": title });
         if let Some(ft) = folder_token {
@@ -341,7 +389,10 @@ impl FeishuClient {
             .context("failed to create document")?;
         let body: serde_json::Value = resp.json().await?;
         check_feishu_code(&body)?;
-        let doc_token = body["data"]["document"]["document_id"].as_str().unwrap_or("").to_string();
+        let doc_token = body["data"]["document"]["document_id"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         Ok(doc_token)
     }
 
@@ -349,7 +400,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/docx/v1/documents/{doc_token}/blocks", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/docx/v1/documents/{doc_token}/blocks",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
@@ -415,14 +469,25 @@ impl FeishuClient {
     ) -> anyhow::Result<serde_json::Value> {
         let token = self.get_tenant_access_token().await?;
         let mut query: Vec<(&str, String)> = vec![];
-        if let Some(ft) = folder_token { query.push(("folder_token", ft.to_string())); }
-        if let Some(ps) = page_size { query.push(("page_size", ps.to_string())); }
-        if let Some(pt) = page_token { query.push(("page_token", pt.to_string())); }
+        if let Some(ft) = folder_token {
+            query.push(("folder_token", ft.to_string()));
+        }
+        if let Some(ps) = page_size {
+            query.push(("page_size", ps.to_string()));
+        }
+        if let Some(pt) = page_token {
+            query.push(("page_token", pt.to_string()));
+        }
         let resp = self
             .http
             .get(format!("{}/open-apis/drive/v1/files", OPEN_API_BASE))
             .header("Authorization", format!("Bearer {}", token))
-            .query(&query.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>())
+            .query(
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_str()))
+                    .collect::<Vec<_>>(),
+            )
             .send()
             .await
             .context("failed to list drive files")?;
@@ -449,7 +514,10 @@ impl FeishuClient {
             .part("file", part);
         let resp = self
             .http
-            .post(format!("{}/open-apis/drive/v1/files/upload_all", OPEN_API_BASE))
+            .post(format!(
+                "{}/open-apis/drive/v1/files/upload_all",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .multipart(form)
             .send()
@@ -457,7 +525,10 @@ impl FeishuClient {
             .context("failed to upload file")?;
         let body: serde_json::Value = resp.json().await?;
         check_feishu_code(&body)?;
-        let file_token = body["data"]["file_token"].as_str().unwrap_or("").to_string();
+        let file_token = body["data"]["file_token"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         Ok(file_token)
     }
 
@@ -465,7 +536,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/drive/v1/files/{file_token}/download", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/drive/v1/files/{file_token}/download",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
@@ -478,7 +552,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .get(format!("{}/open-apis/drive/v1/files/{file_token}", OPEN_API_BASE))
+            .get(format!(
+                "{}/open-apis/drive/v1/files/{file_token}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
@@ -492,7 +569,10 @@ impl FeishuClient {
         let token = self.get_tenant_access_token().await?;
         let resp = self
             .http
-            .delete(format!("{}/open-apis/drive/v1/files/{file_token}", OPEN_API_BASE))
+            .delete(format!(
+                "{}/open-apis/drive/v1/files/{file_token}",
+                OPEN_API_BASE
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await

@@ -3,11 +3,11 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use std::sync::OnceLock;
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
@@ -76,7 +76,8 @@ pub fn highlight_code(lang: &str, code: &str, bg: Color) -> Vec<Line<'static>> {
         let mut lines: Vec<Line> = Vec::new();
 
         for line in LinesWithEndings::from(code) {
-            let highlighted = highlighter.highlight_line(line, ss())
+            let highlighted = highlighter
+                .highlight_line(line, ss())
                 .unwrap_or_else(|_| vec![(syntect::highlighting::Style::default(), line)]);
 
             let spans: Vec<Span> = highlighted
@@ -85,7 +86,10 @@ pub fn highlight_code(lang: &str, code: &str, bg: Color) -> Vec<Line<'static>> {
                     let fg = to_ratatui_color(style.foreground);
                     Span::styled(
                         text.trim_end_matches('\n').to_string(),
-                        Style::default().fg(fg).bg(bg).add_modifier(to_modifier(style.font_style)),
+                        Style::default()
+                            .fg(fg)
+                            .bg(bg)
+                            .add_modifier(to_modifier(style.font_style)),
                     )
                 })
                 .collect();
@@ -121,7 +125,11 @@ mod tests {
 
     #[test]
     fn test_highlight_rust_code() {
-        let lines = highlight_code("rust", "fn main() {\n    println!(\"hi\");\n}\n", crate::theme::PANEL);
+        let lines = highlight_code(
+            "rust",
+            "fn main() {\n    println!(\"hi\");\n}\n",
+            crate::theme::PANEL,
+        );
         assert!(!lines.is_empty());
         for line in &lines {
             assert!(!line.spans.is_empty());

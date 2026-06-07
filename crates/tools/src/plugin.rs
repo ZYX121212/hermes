@@ -103,7 +103,10 @@ pub struct ScriptPlugin {
 
 impl ScriptPlugin {
     pub fn new(manifest: PluginManifest, script_dir: std::path::PathBuf) -> Self {
-        Self { manifest, script_dir }
+        Self {
+            manifest,
+            script_dir,
+        }
     }
 }
 
@@ -123,9 +126,9 @@ impl Tool for ScriptPlugin {
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let interpreter = self.manifest.interpreter.as_deref().unwrap_or("sh");
-        let script_path = self.script_dir.join(
-            self.manifest.script.as_deref().unwrap_or("run.sh"),
-        );
+        let script_path = self
+            .script_dir
+            .join(self.manifest.script.as_deref().unwrap_or("run.sh"));
 
         let args_json = serde_json::to_string(&args)?;
 

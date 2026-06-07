@@ -94,7 +94,6 @@ fn parse_key(s: &str) -> Option<KeyDesc> {
         "j" => KeyCode::Char('j'),
         "k" => KeyCode::Char('k'),
         "n" => KeyCode::Char('n'),
-        "N" => KeyCode::Char('N'),
         "l" => KeyCode::Char('l'),
         "c" => KeyCode::Char('c'),
         "w" => KeyCode::Char('w'),
@@ -108,7 +107,10 @@ fn parse_key(s: &str) -> Option<KeyDesc> {
         _ => return None,
     };
 
-    Some(KeyDesc { code, modifiers: mods })
+    Some(KeyDesc {
+        code,
+        modifiers: mods,
+    })
 }
 
 /// Keybinding map with TOML deserialization support.

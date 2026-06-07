@@ -7,14 +7,18 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{clamp_scroll, render_scrollbar, TuiAppState};
+use crate::state::{
+    clamp_scroll, render_scrollbar, wrapped_line_count, StepExecState, TuiAppState,
+};
 use crate::theme;
+
+const MAX_STEP_PREVIEW_LINES: usize = 10;
 
 pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
     if area.width < 2 || area.height < 2 {
         return;
     }
-    let block = theme::panel_block("Results", theme::GREEN, focused);
+    let block = theme::panel_block("Result", theme::GREEN, focused);
 
     let inner = block.inner(area);
     let viewport_h = inner.height;
@@ -35,7 +39,10 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
         spans.extend(crate::rich_text::render_markdown_line(summary, summary_style).spans);
         lines.push(Line::from(spans));
     } else if !state.summary_streaming_buffer.is_empty() {
-        let preview = crate::state::truncate(&state.summary_streaming_buffer, text_width.saturating_sub(12));
+        let preview = crate::state::truncate(
+            &state.summary_streaming_buffer,
+            text_width.saturating_sub(12),
+        );
         let mut spans = vec![Span::styled(
             " SUMMARY ",
             Style::default()
@@ -119,18 +126,19 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
                 Style::default().fg(color).bg(theme::PANEL),
             )));
 
-            if let Some(ref preview) = step.content_preview {
+            if let Some(preview_lines) = step_preview_lines(step) {
                 let preview_indent = format!("{}    ", indent);
-                let available = text_width.saturating_sub(preview_indent.len());
-                let preview_line = crate::state::truncate(preview, available);
                 let indent_style = Style::default().fg(theme::SUBTLE).bg(theme::PANEL);
-                let mut spans = vec![ratatui::text::Span::styled(
-                    preview_indent.clone(),
-                    indent_style,
-                )];
-                let md_spans = crate::rich_text::render_markdown_line(&preview_line, indent_style).spans;
-                spans.extend(md_spans);
-                lines.push(Line::from(spans));
+                for preview_line in preview_lines {
+                    let mut spans = vec![ratatui::text::Span::styled(
+                        preview_indent.clone(),
+                        indent_style,
+                    )];
+                    spans.extend(
+                        crate::rich_text::render_markdown_line(&preview_line, indent_style).spans,
+                    );
+                    lines.push(Line::from(spans));
+                }
             }
         }
     }
@@ -162,11 +170,21 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
         Style::default().bg(theme::PANEL),
     )));
     lines.push(Line::from(Span::styled(
-        " 按 q 退出    |    按 Tab 切换至 Log 面板",
+        " 按 q 退出    |    ↑↓ 滚动    |    Enter 查看完整步骤输出    |    Tab 切换至 Log 面板",
         Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
     )));
 
-    let content_height = lines.len();
+    let content_text: String = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content_height = wrapped_line_count(&content_text, inner.width.saturating_sub(1));
 
     let effective_scroll = clamp_scroll(state.log_scroll, content_height, viewport_h);
 
@@ -197,5 +215,35 @@ pub fn render_results(frame: &mut Frame, area: Rect, state: &TuiAppState, focuse
             height: viewport_h,
         };
         frame.render_widget(Paragraph::new(bar_lines), bar_rect);
+    }
+}
+
+fn step_preview_lines(step: &StepExecState) -> Option<Vec<String>> {
+    let content = step
+        .content_full
+        .as_deref()
+        .or(step.content_preview.as_deref())?
+        .trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    let formatted = serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+        .unwrap_or_else(|| content.to_string());
+
+    let mut lines: Vec<String> = formatted
+        .lines()
+        .take(MAX_STEP_PREVIEW_LINES)
+        .map(|line| line.to_string())
+        .collect();
+    if formatted.lines().count() > MAX_STEP_PREVIEW_LINES {
+        lines.push("… 按 Enter 查看完整输出".to_string());
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines)
     }
 }

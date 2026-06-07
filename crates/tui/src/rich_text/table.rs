@@ -61,15 +61,13 @@ pub fn parse_markdown_table<'a>(lines: &[&str]) -> Option<Table<'a>> {
         .map(|_| ratatui::layout::Constraint::Percentage(100 / column_count.max(1)))
         .collect();
 
-    let table = Table::new(data_rows, widths)
-        .header(header_row)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme::BORDER))
-                .style(Style::default().bg(theme::PANEL)),
-        );
+    let table = Table::new(data_rows, widths).header(header_row).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme::BORDER))
+            .style(Style::default().bg(theme::PANEL)),
+    );
 
     Some(table)
 }

@@ -54,12 +54,22 @@ pub fn render_context_ref(frame: &mut Frame, area: Rect, state: &TuiAppState) {
                 _ => "?",
             };
             let prefix = if is_sel { "> " } else { "  " };
-            let bg = if is_sel { theme::PANEL_ALT } else { theme::PANEL };
+            let bg = if is_sel {
+                theme::PANEL_ALT
+            } else {
+                theme::PANEL
+            };
             Line::from(vec![
-                Span::styled(format!("{prefix}[{source_icon}] {}", item.label),
-                    Style::default().fg(if is_sel { theme::CYAN } else { theme::TEXT }).bg(bg)),
-                Span::styled(format!(" {}", item.preview),
-                    Style::default().fg(theme::SUBTLE).bg(bg)),
+                Span::styled(
+                    format!("{prefix}[{source_icon}] {}", item.label),
+                    Style::default()
+                        .fg(if is_sel { theme::CYAN } else { theme::TEXT })
+                        .bg(bg),
+                ),
+                Span::styled(
+                    format!(" {}", item.preview),
+                    Style::default().fg(theme::SUBTLE).bg(bg),
+                ),
             ])
         })
         .collect();
@@ -69,21 +79,24 @@ pub fn render_context_ref(frame: &mut Frame, area: Rect, state: &TuiAppState) {
 
 /// Populate suggestions based on query text.
 pub fn populate_suggestions(state: &mut TuiAppState) {
-    let query = state.context_ref_query.to_lowercase();
+    let query = state
+        .context_ref_query
+        .trim_start_matches('@')
+        .to_lowercase();
     state.context_ref_items.clear();
 
     // File suggestions
     if let Ok(entries) = std::fs::read_dir(".") {
         for entry in entries.flatten().take(10) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if query.is_empty() || name.to_lowercase().contains(&query) {
-                if state.context_ref_items.len() < 5 {
-                    state.context_ref_items.push(ContextRefItem {
-                        source: "file".into(),
-                        label: format!("file:{}", name),
-                        preview: String::new(),
-                    });
-                }
+            if (query.is_empty() || name.to_lowercase().contains(&query))
+                && state.context_ref_items.len() < 5
+            {
+                state.context_ref_items.push(ContextRefItem {
+                    source: "file".into(),
+                    label: format!("file:{}", name),
+                    preview: String::new(),
+                });
             }
         }
     }

@@ -190,10 +190,14 @@ app_secret = "{}"
             }
         }
         if let Ok(v) = std::env::var("FEISHU_APP_ID") {
-            if !v.is_empty() { self.feishu_app_id = v; }
+            if !v.is_empty() {
+                self.feishu_app_id = v;
+            }
         }
         if let Ok(v) = std::env::var("FEISHU_APP_SECRET") {
-            if !v.is_empty() { self.feishu_app_secret = v; }
+            if !v.is_empty() {
+                self.feishu_app_secret = v;
+            }
         }
     }
 

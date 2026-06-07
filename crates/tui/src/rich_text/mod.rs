@@ -41,10 +41,7 @@ pub fn render_markdown_line(text: &str, base_style: Style) -> Line<'static> {
             if let Some(end) = find_closing_double(&chars, pos + 2, '*') {
                 if end + 1 < len && chars[end + 1] == '*' {
                     let bold: String = chars[pos + 2..end].iter().collect();
-                    spans.push(Span::styled(
-                        bold,
-                        base_style.add_modifier(Modifier::BOLD),
-                    ));
+                    spans.push(Span::styled(bold, base_style.add_modifier(Modifier::BOLD)));
                     pos = end + 2;
                     continue;
                 }
@@ -56,7 +53,10 @@ pub fn render_markdown_line(text: &str, base_style: Style) -> Line<'static> {
         if chars[pos] == '*' && !(pos + 1 < len && chars[pos + 1] == '*') {
             if let Some(end) = find_closing(&chars, pos + 1, '*') {
                 let italic: String = chars[pos + 1..end].iter().collect();
-                spans.push(Span::styled(italic, base_style));
+                spans.push(Span::styled(
+                    italic,
+                    base_style.add_modifier(Modifier::ITALIC),
+                ));
                 pos = end + 1;
                 continue;
             }
@@ -196,7 +196,8 @@ fn find_closing(chars: &[char], start: usize, target: char) -> Option<usize> {
 
 /// Find position just before a double delimiter (e.g. `**` → position of first `*`).
 fn find_closing_double(chars: &[char], start: usize, target: char) -> Option<usize> {
-    (start..chars.len()).find(|&i| chars[i] == target && i + 1 < chars.len() && chars[i + 1] == target)
+    (start..chars.len())
+        .find(|&i| chars[i] == target && i + 1 < chars.len() && chars[i + 1] == target)
 }
 
 #[cfg(test)]

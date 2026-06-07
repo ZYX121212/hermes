@@ -100,7 +100,11 @@ pub fn render_overlay(frame: &mut Frame, area: Rect, overlay: &StepOutputOverlay
 
     // Scrollbar
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(clamp_scroll(overlay.scroll, content_height, viewport_h), content_height, viewport_h);
+        let bar = render_scrollbar(
+            clamp_scroll(overlay.scroll, content_height, viewport_h),
+            content_height,
+            viewport_h,
+        );
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

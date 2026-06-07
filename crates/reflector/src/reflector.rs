@@ -42,12 +42,19 @@ impl Reflector {
 
         // 2. Use LLM for semantic attribution on failure (save tokens on success)
         let lesson = if score < 0.0 {
+            let task_context = result
+                .user_input
+                .as_deref()
+                .map(|t| format!("用户任务: {t}\n"))
+                .unwrap_or_default();
             let prompt = format!(
-                "Analyze this failed execution and write a one-sentence lesson.\n\
+                "Analyze this failed execution and write a one-sentence lesson in Chinese.\n\
+                 {}\
                  Execution: {}\n\
                  Duration: {}ms\n\
                  Step outputs:\n{}\n\n\
-                 What went wrong and how should we adjust the strategy?",
+                 哪里出错了？应该如何调整策略？",
+                task_context,
                 if result.success { "SUCCESS" } else { "FAILURE" },
                 result.duration_ms,
                 result

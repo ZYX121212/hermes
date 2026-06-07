@@ -15,17 +15,32 @@ pub fn render_tab_bar(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         return;
     }
 
-    let tabs: Vec<Span> = state.session_tabs.iter().enumerate().flat_map(|(i, tab)| {
-        let is_active = i == state.active_tab_index;
-        let style = if is_active {
-            Style::default().fg(theme::BG).bg(theme::CYAN).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme::MUTED).bg(theme::PANEL)
-        };
-        let close = Span::styled("x", Style::default().fg(if is_active { theme::BG } else { theme::SUBTLE }));
-        let name = Span::styled(format!(" {} ", tab.name), style);
-        vec![name, close, Span::styled(" ", Style::default().bg(theme::BG))]
-    }).collect();
+    let tabs: Vec<Span> = state
+        .session_tabs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, tab)| {
+            let is_active = i == state.active_tab_index;
+            let style = if is_active {
+                Style::default()
+                    .fg(theme::BG)
+                    .bg(theme::CYAN)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::MUTED).bg(theme::PANEL)
+            };
+            let close = Span::styled(
+                "x",
+                Style::default().fg(if is_active { theme::BG } else { theme::SUBTLE }),
+            );
+            let name = Span::styled(format!(" {} ", tab.name), style);
+            vec![
+                name,
+                close,
+                Span::styled(" ", Style::default().bg(theme::BG)),
+            ]
+        })
+        .collect();
 
     let plus = Span::styled(" + ", Style::default().fg(theme::SUBTLE).bg(theme::BG));
     let all_spans: Vec<Span> = tabs.into_iter().chain(std::iter::once(plus)).collect();

@@ -40,7 +40,9 @@ impl CronField {
         // comma-separated list
         if s.contains(',') {
             let vals: Result<Vec<u32>, _> = s.split(',').map(|v| v.parse::<u32>()).collect();
-            return Ok(CronField::List(vals.map_err(|e| format!("invalid list: {e}"))?));
+            return Ok(CronField::List(
+                vals.map_err(|e| format!("invalid list: {e}"))?,
+            ));
         }
         // single value
         s.parse::<u32>()
@@ -54,7 +56,7 @@ impl CronField {
             CronField::Single(v) => *v == val,
             CronField::List(vals) => vals.contains(&val),
             CronField::Range(lo, hi) => *lo <= val && val <= *hi,
-            CronField::Step(start, step) => (val - start) % step == 0,
+            CronField::Step(start, step) => *step > 0 && val >= *start && (val - start) % step == 0,
         }
     }
 }

@@ -14,9 +14,78 @@ use ratatui::Terminal;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::state::{
-    AgentPhase, FocusedPanel, LeftTab, LogEntry, StepExecState, StepStatus,
-    TuiAppState, TuiInput,
+    AgentPhase, FocusedPanel, LeftTab, LogEntry, StepExecState, StepStatus, TuiAppState, TuiInput,
 };
+
+/// Close all overlays and focus the input panel — unified exit path.
+fn close_overlays_focus_input(state: &mut TuiAppState) {
+    state.output_overlay = None;
+    state.slash_command_popup = None;
+    state.help_visible = false;
+    state.settings_visible = false;
+    state.settings_editing = false;
+    state.settings_dirty_confirm = false;
+    state.focused_panel = FocusedPanel::Input;
+}
+
+fn begin_next_task_input(state: &mut TuiAppState, tui_input: &TuiInput) {
+    tui_input
+        .awaiting
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    tui_input.buffer.lock().clear();
+    *tui_input.cursor.lock() = 0;
+    *tui_input.submitted.lock() = None;
+    state.awaiting_input = true;
+    state.input_text.clear();
+    state.input_cursor = 0;
+    state.input_line_count = 1;
+    state.focused_panel = FocusedPanel::Input;
+}
+
+fn submit_tui_input(state: &mut TuiAppState, tui_input: &TuiInput, text: String) -> bool {
+    let mut submitted = tui_input.submitted.lock();
+    if submitted.is_some() {
+        return false;
+    }
+    *submitted = Some(text);
+    drop(submitted);
+
+    tui_input
+        .awaiting
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    tui_input.buffer.lock().clear();
+    *tui_input.cursor.lock() = 0;
+    state.awaiting_input = false;
+    state.input_text.clear();
+    state.input_cursor = 0;
+    state.input_history_pos = None;
+    state.input_draft.clear();
+    state.context_ref_active = false;
+    state.context_ref_query.clear();
+    true
+}
+
+fn close_settings_or_confirm_discard(state: &mut TuiAppState) {
+    if state.settings_dirty && !state.settings_dirty_confirm {
+        state.settings_dirty_confirm = true;
+    } else {
+        if state.settings_dirty {
+            state.user_settings = load_effective_user_settings();
+        }
+        state.settings_visible = false;
+        state.settings_editing = false;
+        state.settings_edit_buffer.clear();
+        state.settings_dirty_confirm = false;
+        state.settings_dirty = false;
+        state.focused_panel = FocusedPanel::Input;
+    }
+}
+
+fn load_effective_user_settings() -> crate::settings_store::UserSettings {
+    let mut settings = crate::settings_store::UserSettings::load();
+    settings.apply_env_overrides();
+    settings
+}
 
 /// Main entry point for TUI mode.
 pub async fn run_tui<A>(
@@ -46,11 +115,9 @@ where
     let mut terminal = Terminal::new(backend)?;
 
     // ── Shared state ──
-    let mut state_init = TuiAppState::new(
-        agent_name.clone(),
-        Arc::clone(&evolution),
-    );
+    let mut state_init = TuiAppState::new(agent_name.clone(), Arc::clone(&evolution));
     state_init.usage_tracker = usage_tracker;
+    state_init.user_settings = load_effective_user_settings();
     let app_state = Arc::new(parking_lot::RwLock::new(state_init));
 
     let rx = Arc::new(parking_lot::Mutex::new(event_rx));
@@ -89,6 +156,11 @@ where
                     String::new()
                 };
                 state.input_cursor = *cursor;
+                state.input_line_count = if state.awaiting_input {
+                    input_line_count_for(&state.input_text)
+                } else {
+                    1
+                };
                 drop(cursor);
                 drop(buffer);
                 state.frame_count += 1;
@@ -119,40 +191,39 @@ where
                     Ok(Event::Key(key)) => {
                         let mut state = app_state.write();
 
+                        if is_ctrl_c(key.code, key.modifiers) {
+                            request_tui_quit(&mut state, &tui_input);
+                            continue;
+                        }
+
                         // ── Overlay mode (absorbs all keys) ──
                         if state.output_overlay.is_some() {
                             match key.code {
-                                KeyCode::Esc | KeyCode::Char('q') => {
+                                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
                                     state.output_overlay = None;
                                 }
-                                KeyCode::Enter => {
-                                    // Close overlay but keep selection
-                                    state.output_overlay = None;
+                                KeyCode::Tab | KeyCode::BackTab => {
+                                    // No-op: overlay has no pages to switch
                                 }
-                                KeyCode::Left
-                                | KeyCode::Char('h')
-                                | KeyCode::Char('p') => {
+                                KeyCode::Char(_) if state.awaiting_input => {
+                                    close_overlays_focus_input(&mut state);
+                                }
+                                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p') => {
                                     // Previous step
                                     let len = state.executions.len();
                                     if len > 0 {
-                                        let idx = state
-                                            .exec_selected_index
-                                            .unwrap_or(0);
+                                        let idx = state.exec_selected_index.unwrap_or(0);
                                         if idx > 0 {
                                             let new_idx = idx - 1;
                                             open_step_overlay(&mut state, new_idx);
                                         }
                                     }
                                 }
-                                KeyCode::Right
-                                | KeyCode::Char('l')
-                                | KeyCode::Char('n') => {
+                                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') => {
                                     // Next step
                                     let len = state.executions.len();
                                     if len > 0 {
-                                        let idx = state
-                                            .exec_selected_index
-                                            .unwrap_or(0);
+                                        let idx = state.exec_selected_index.unwrap_or(0);
                                         if idx + 1 < len {
                                             let new_idx = idx + 1;
                                             open_step_overlay(&mut state, new_idx);
@@ -200,6 +271,12 @@ where
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     state.slash_command_popup = None;
                                 }
+                                KeyCode::Tab | KeyCode::BackTab => {
+                                    // No-op: popup has no pages to switch
+                                }
+                                KeyCode::Char(_) if state.awaiting_input => {
+                                    close_overlays_focus_input(&mut state);
+                                }
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     if let Some(ref mut p) = state.slash_command_popup {
                                         p.scroll = p.scroll.saturating_sub(1);
@@ -235,28 +312,51 @@ where
                             continue;
                         }
 
-                        // ── Help overlay absorbs keys ──
+                        // ── Help overlay ──
                         if state.help_visible {
                             match key.code {
                                 KeyCode::Char('h') | KeyCode::Esc | KeyCode::F(1) => {
                                     state.help_visible = false;
+                                    if state.awaiting_input {
+                                        state.focused_panel = FocusedPanel::Input;
+                                    }
                                 }
-                                _ => {} // ignore other keys while help visible
+                                KeyCode::Tab | KeyCode::BackTab => {
+                                    // No-op: help has no pages to switch
+                                }
+                                KeyCode::Char(_) if state.awaiting_input => {
+                                    close_overlays_focus_input(&mut state);
+                                }
+                                _ => {}
                             }
                             continue;
                         }
 
-                        // ── Settings overlay absorbs keys ──
+                        // ── Settings overlay ──
                         if state.settings_visible {
-                            let fields = crate::panels::settings::fields_for_tab(state.settings_tab);
+                            let fields =
+                                crate::panels::settings::fields_for_tab(state.settings_tab);
                             let field_count = fields.len().max(1);
 
-                            // Text editing mode — limited keys
+                            // Text editing mode
                             if state.settings_editing {
                                 match key.code {
                                     KeyCode::Esc => {
                                         state.settings_editing = false;
                                         state.settings_edit_buffer.clear();
+                                    }
+                                    KeyCode::Tab | KeyCode::BackTab => {
+                                        // Exit editing, switch settings tab
+                                        state.settings_editing = false;
+                                        state.settings_edit_buffer.clear();
+                                        state.settings_tab = if key.code == KeyCode::BackTab
+                                            || key.modifiers.contains(KeyModifiers::SHIFT)
+                                        {
+                                            state.settings_tab.prev()
+                                        } else {
+                                            state.settings_tab.next()
+                                        };
+                                        state.settings_field_focus = 0;
                                     }
                                     KeyCode::Enter => {
                                         let f = &fields[state.settings_field_focus % field_count];
@@ -279,45 +379,30 @@ where
                             // Normal mode
                             match key.code {
                                 // ── Close ──
-                                KeyCode::Esc => {
-                                    if state.settings_dirty && !state.settings_dirty_confirm {
-                                        state.settings_dirty_confirm = true;
-                                    } else {
-                                        state.settings_visible = false;
-                                        state.settings_dirty_confirm = false;
-                                    }
-                                }
-                                KeyCode::F(2) | KeyCode::Char('q') => {
-                                    if state.settings_dirty && !state.settings_dirty_confirm {
-                                        state.settings_dirty_confirm = true;
-                                    } else {
-                                        state.settings_visible = false;
-                                        state.settings_dirty_confirm = false;
-                                    }
+                                KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q') => {
+                                    close_settings_or_confirm_discard(&mut state);
                                 }
                                 KeyCode::Char('s') => {
                                     if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                        // Ctrl+S: save
                                         if let Err(e) = state.user_settings.save() {
                                             tracing::warn!(error = %e, "Failed to save settings");
                                         } else {
                                             *tui_input.settings_changed.lock() =
                                                 Some(state.user_settings.clone());
                                             state.settings_dirty = false;
-                                            state.settings_saved_flash = 60; // ~2s at 30fps
+                                            state.settings_saved_flash = 60;
                                             state.settings_dirty_confirm = false;
                                         }
-                                    } else if state.settings_dirty && !state.settings_dirty_confirm {
-                                        state.settings_dirty_confirm = true;
                                     } else {
-                                        state.settings_visible = false;
-                                        state.settings_dirty_confirm = false;
+                                        close_settings_or_confirm_discard(&mut state);
                                     }
                                 }
 
-                                // ── Tab navigation ──
-                                KeyCode::Tab => {
-                                    state.settings_tab = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                // ── Tab / Shift+Tab: switch settings tab page ──
+                                KeyCode::Tab | KeyCode::BackTab => {
+                                    state.settings_tab = if key.code == KeyCode::BackTab
+                                        || key.modifiers.contains(KeyModifiers::SHIFT)
+                                    {
                                         state.settings_tab.prev()
                                     } else {
                                         state.settings_tab.next()
@@ -337,15 +422,23 @@ where
                                     }
                                 }
 
-                                // ── Edit / Toggle ──
+                                // ── Space: cycle/switch value ──
                                 KeyCode::Char(' ') => {
                                     let f = &fields[state.settings_field_focus % field_count];
-                                    if matches!(f.kind, crate::panels::settings::FieldKind::Toggle) {
-                                        settings_toggle(&mut state, f.label);
-                                        state.settings_dirty = true;
-                                        state.settings_dirty_confirm = false;
+                                    state.settings_dirty_confirm = false;
+                                    match f.kind {
+                                        crate::panels::settings::FieldKind::Toggle => {
+                                            settings_toggle(&mut state, f.label);
+                                            state.settings_dirty = true;
+                                        }
+                                        crate::panels::settings::FieldKind::Dropdown => {
+                                            settings_cycle_dropdown(&mut state, f.label);
+                                            state.settings_dirty = true;
+                                        }
+                                        _ => {}
                                     }
                                 }
+                                // ── Enter: edit (Text) or switch (Toggle/Dropdown) ──
                                 KeyCode::Enter => {
                                     let f = &fields[state.settings_field_focus % field_count];
                                     state.settings_dirty_confirm = false;
@@ -364,6 +457,11 @@ where
                                                 settings_get_text(&state, f.label);
                                         }
                                     }
+                                }
+
+                                // ── Char passthrough: agent waiting → close → Input ──
+                                KeyCode::Char(_) if state.awaiting_input => {
+                                    close_overlays_focus_input(&mut state);
                                 }
 
                                 _ => {}
@@ -440,11 +538,7 @@ where
                         if state.awaiting_input {
                             match key.code {
                                 KeyCode::Esc => {
-                                    tui_input.buffer.lock().clear();
-                                    *tui_input.cursor.lock() = 0;
-                                    *tui_input.submitted.lock() = Some(String::new());
-                                    state.input_history_pos = None;
-                                    state.input_draft.clear();
+                                    submit_tui_input(&mut state, &tui_input, String::new());
                                 }
                                 KeyCode::Enter => {
                                     if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -462,24 +556,18 @@ where
                                             .unwrap_or(buffer.len());
                                         buffer.insert(byte_idx, '\n');
                                         *cursor += 1;
-                                        state.input_line_count = (state.input_line_count + 1).min(8);
                                         // Deactivate context_ref on newline
                                         state.context_ref_active = false;
+                                        state.context_ref_query.clear();
                                     } else {
-                                        let mut buffer = tui_input.buffer.lock();
-                                        let text = buffer.clone();
+                                        let text = tui_input.buffer.lock().clone();
                                         if !text.is_empty() {
                                             if state.input_history.len() >= 50 {
                                                 state.input_history.pop_front();
                                             }
                                             state.input_history.push_back(text.clone());
                                         }
-                                        state.input_history_pos = None;
-                                        state.input_draft.clear();
-                                        buffer.clear();
-                                        drop(buffer);
-                                        *tui_input.cursor.lock() = 0;
-                                        *tui_input.submitted.lock() = Some(text);
+                                        submit_tui_input(&mut state, &tui_input, text);
                                     }
                                 }
                                 KeyCode::Backspace => {
@@ -497,6 +585,29 @@ where
                                             *cursor = idx;
                                         }
                                     }
+                                    // Update context_ref state after backspace
+                                    if state.context_ref_active {
+                                        let new_cursor = *cursor;
+                                        let buf = buffer.clone();
+                                        drop(cursor);
+                                        drop(buffer);
+                                        let byte_end = buf
+                                            .char_indices()
+                                            .nth(new_cursor.min(buf.chars().count()))
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(buf.len());
+                                        let last_at = buf[..byte_end].rfind('@');
+                                        if let Some(at_pos) = last_at {
+                                            state.context_ref_query =
+                                                buf[at_pos..byte_end].to_string();
+                                            crate::panels::context_ref::populate_suggestions(
+                                                &mut state,
+                                            );
+                                        } else {
+                                            state.context_ref_active = false;
+                                            state.context_ref_query.clear();
+                                        }
+                                    }
                                 }
                                 KeyCode::Delete => {
                                     let mut buffer = tui_input.buffer.lock();
@@ -509,6 +620,29 @@ where
                                             .map(|(i, _)| i)
                                             .unwrap_or(0);
                                         buffer.remove(char_idx);
+                                    }
+                                    let cur = *cursor;
+                                    drop(cursor);
+                                    // Update context_ref state after delete
+                                    if state.context_ref_active {
+                                        let buf = buffer.clone();
+                                        drop(buffer);
+                                        let byte_end = buf
+                                            .char_indices()
+                                            .nth(cur.min(buf.chars().count()))
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(buf.len());
+                                        let last_at = buf[..byte_end].rfind('@');
+                                        if let Some(at_pos) = last_at {
+                                            state.context_ref_query =
+                                                buf[at_pos..byte_end].to_string();
+                                            crate::panels::context_ref::populate_suggestions(
+                                                &mut state,
+                                            );
+                                        } else {
+                                            state.context_ref_active = false;
+                                            state.context_ref_query.clear();
+                                        }
                                     }
                                 }
                                 KeyCode::Left => {
@@ -542,9 +676,7 @@ where
                                     // Find start of current/last word
                                     let mut del_start = cursor_pos;
                                     // Skip trailing spaces
-                                    while del_start > 0
-                                        && chars[del_start - 1].is_whitespace()
-                                    {
+                                    while del_start > 0 && chars[del_start - 1].is_whitespace() {
                                         del_start -= 1;
                                     }
                                     while del_start > 0 && !chars[del_start - 1].is_whitespace() {
@@ -554,12 +686,32 @@ where
                                         .iter()
                                         .map(|c| c.len_utf8())
                                         .sum::<usize>();
-                                    let end_byte: usize = chars[..cursor_pos]
-                                        .iter()
-                                        .map(|c| c.len_utf8())
-                                        .sum();
+                                    let end_byte: usize =
+                                        chars[..cursor_pos].iter().map(|c| c.len_utf8()).sum();
                                     buffer.replace_range(byte_idx..end_byte, "");
                                     *tui_input.cursor.lock() = del_start;
+                                    // Update context_ref after word delete
+                                    if state.context_ref_active {
+                                        let cur = del_start;
+                                        let buf = buffer.clone();
+                                        drop(buffer);
+                                        let byte_end = buf
+                                            .char_indices()
+                                            .nth(cur.min(buf.chars().count()))
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(buf.len());
+                                        let last_at = buf[..byte_end].rfind('@');
+                                        if let Some(at_pos) = last_at {
+                                            state.context_ref_query =
+                                                buf[at_pos..byte_end].to_string();
+                                            crate::panels::context_ref::populate_suggestions(
+                                                &mut state,
+                                            );
+                                        } else {
+                                            state.context_ref_active = false;
+                                            state.context_ref_query.clear();
+                                        }
+                                    }
                                 }
                                 KeyCode::Char(c)
                                     if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -569,20 +721,32 @@ where
                                     let mut buffer = tui_input.buffer.lock();
                                     let cursor_pos = *tui_input.cursor.lock();
                                     let chars: Vec<char> = buffer.chars().collect();
-                                    let byte_idx: usize = chars[..cursor_pos]
-                                        .iter()
-                                        .map(|c| c.len_utf8())
-                                        .sum();
+                                    let byte_idx: usize =
+                                        chars[..cursor_pos].iter().map(|c| c.len_utf8()).sum();
                                     buffer.replace_range(..byte_idx, "");
                                     *tui_input.cursor.lock() = 0;
+                                    let buf = buffer.clone();
+                                    drop(buffer);
+                                    // Update context_ref after line clear
+                                    if state.context_ref_active {
+                                        let last_at = buf.rfind('@');
+                                        if let Some(at_pos) = last_at {
+                                            state.context_ref_query = buf[at_pos..].to_string();
+                                            crate::panels::context_ref::populate_suggestions(
+                                                &mut state,
+                                            );
+                                        } else {
+                                            state.context_ref_active = false;
+                                            state.context_ref_query.clear();
+                                        }
+                                    }
                                 }
                                 KeyCode::Up => {
                                     let hist_len = state.input_history.len();
                                     if hist_len > 0 {
                                         // Save current text as draft before entering history
                                         if state.input_history_pos.is_none() {
-                                            state.input_draft =
-                                                tui_input.buffer.lock().clone();
+                                            state.input_draft = tui_input.buffer.lock().clone();
                                         }
                                         let pos = state
                                             .input_history_pos
@@ -615,8 +779,7 @@ where
                                             state.input_history_pos = Some(new_pos);
                                         } else {
                                             // Past end: restore saved draft
-                                            let draft =
-                                                std::mem::take(&mut state.input_draft);
+                                            let draft = std::mem::take(&mut state.input_draft);
                                             state.input_history_pos = None;
                                             let len = draft.chars().count();
                                             *tui_input.buffer.lock() = draft;
@@ -649,26 +812,35 @@ where
                                         if c == '@' {
                                             state.context_ref_active = true;
                                             state.context_ref_query = "@".to_string();
-                                            crate::panels::context_ref::populate_suggestions(&mut *state);
+                                            crate::panels::context_ref::populate_suggestions(
+                                                &mut state,
+                                            );
                                         } else if state.context_ref_active {
                                             if c == ' ' {
                                                 state.context_ref_active = false;
                                             } else {
                                                 state.context_ref_query.push(c);
-                                                crate::panels::context_ref::populate_suggestions(&mut *state);
+                                                crate::panels::context_ref::populate_suggestions(
+                                                    &mut state,
+                                                );
                                             }
                                         }
                                     }
                                 }
                                 KeyCode::Tab => {
-                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                        state.focused_panel = state.focused_panel.prev();
-                                    } else {
-                                        state.focused_panel = state.focused_panel.next();
+                                    // No-op while context_ref suggestions are visible
+                                    if !state.context_ref_active {
+                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                            state.focused_panel = state.focused_panel.prev();
+                                        } else {
+                                            state.focused_panel = state.focused_panel.next();
+                                        }
                                     }
                                 }
                                 KeyCode::BackTab => {
-                                    state.focused_panel = state.focused_panel.prev();
+                                    if !state.context_ref_active {
+                                        state.focused_panel = state.focused_panel.prev();
+                                    }
                                 }
                                 _ => {}
                             }
@@ -744,20 +916,17 @@ where
                                     }
                                 }
                                 KeyCode::Left => {
-                                    state.input_cursor =
-                                        state.input_cursor.saturating_sub(1);
+                                    state.input_cursor = state.input_cursor.saturating_sub(1);
                                 }
                                 KeyCode::Right => {
                                     let len = state.search_query.chars().count();
-                                    state.input_cursor =
-                                        (state.input_cursor + 1).min(len);
+                                    state.input_cursor = (state.input_cursor + 1).min(len);
                                 }
                                 KeyCode::Home => {
                                     state.input_cursor = 0;
                                 }
                                 KeyCode::End => {
-                                    state.input_cursor =
-                                        state.search_query.chars().count();
+                                    state.input_cursor = state.search_query.chars().count();
                                 }
                                 KeyCode::Char(c)
                                     if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -767,22 +936,15 @@ where
                                     let query = &mut state.search_query;
                                     let chars: Vec<char> = query.chars().collect();
                                     let mut del_start = cursor_pos.min(chars.len());
-                                    while del_start > 0
-                                        && chars[del_start - 1].is_whitespace()
-                                    {
+                                    while del_start > 0 && chars[del_start - 1].is_whitespace() {
                                         del_start -= 1;
                                     }
-                                    while del_start > 0
-                                        && !chars[del_start - 1].is_whitespace()
-                                    {
+                                    while del_start > 0 && !chars[del_start - 1].is_whitespace() {
                                         del_start -= 1;
                                     }
-                                    let byte_idx: usize = chars[..del_start]
-                                        .iter()
-                                        .map(|c| c.len_utf8())
-                                        .sum();
-                                    let end_byte: usize = chars
-                                        [..cursor_pos.min(chars.len())]
+                                    let byte_idx: usize =
+                                        chars[..del_start].iter().map(|c| c.len_utf8()).sum();
+                                    let end_byte: usize = chars[..cursor_pos.min(chars.len())]
                                         .iter()
                                         .map(|c| c.len_utf8())
                                         .sum();
@@ -796,8 +958,7 @@ where
                                     let cursor_pos = state.input_cursor;
                                     let query = &mut state.search_query;
                                     let chars: Vec<char> = query.chars().collect();
-                                    let byte_idx: usize = chars
-                                        [..cursor_pos.min(chars.len())]
+                                    let byte_idx: usize = chars[..cursor_pos.min(chars.len())]
                                         .iter()
                                         .map(|c| c.len_utf8())
                                         .sum();
@@ -870,9 +1031,7 @@ where
                                 KeyCode::Char('n') => {
                                     if !state.search_match_lines.is_empty() {
                                         if let Some(cur) = state.search_current_match {
-                                            let next = if cur + 1
-                                                < state.search_match_lines.len()
-                                            {
+                                            let next = if cur + 1 < state.search_match_lines.len() {
                                                 cur + 1
                                             } else {
                                                 0
@@ -888,18 +1047,12 @@ where
                                             let prev = if cur > 0 {
                                                 cur - 1
                                             } else {
-                                                state.search_match_lines.len()
-                                                    .saturating_sub(1)
+                                                state.search_match_lines.len().saturating_sub(1)
                                             };
                                             state.search_current_match = Some(prev);
                                             navigate_to_search_match(&mut state);
                                         }
                                     }
-                                }
-                                KeyCode::Char('c') | KeyCode::Char('C')
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    state.should_quit = true;
                                 }
                                 KeyCode::Char('y') | KeyCode::Char('Y')
                                     if key.modifiers.contains(KeyModifiers::CONTROL) =>
@@ -910,13 +1063,19 @@ where
                                     }
                                 }
                                 // Evolution per-section toggles (only when evolution focused)
-                                KeyCode::Char('w') if state.focused_panel == FocusedPanel::Evolution => {
+                                KeyCode::Char('w')
+                                    if state.focused_panel == FocusedPanel::Evolution =>
+                                {
                                     state.evo_weights_hidden = !state.evo_weights_hidden;
                                 }
-                                KeyCode::Char('t') if state.focused_panel == FocusedPanel::Evolution => {
+                                KeyCode::Char('t')
+                                    if state.focused_panel == FocusedPanel::Evolution =>
+                                {
                                     state.evo_stats_hidden = !state.evo_stats_hidden;
                                 }
-                                KeyCode::Char('m') if state.focused_panel == FocusedPanel::Evolution => {
+                                KeyCode::Char('m')
+                                    if state.focused_panel == FocusedPanel::Evolution =>
+                                {
                                     state.evo_meta_hidden = !state.evo_meta_hidden;
                                 }
                                 KeyCode::Char('h') | KeyCode::F(1) => {
@@ -924,22 +1083,40 @@ where
                                 }
                                 KeyCode::Char('[') => {
                                     let pct = state.left_split_pct.unwrap_or_else(|| {
-                                        state.phase.main_split_ratio(!state.evolution.all_weights().is_empty()).0
+                                        state
+                                            .phase
+                                            .main_split_ratio(
+                                                !state.evolution.all_weights().is_empty(),
+                                            )
+                                            .0
                                     });
                                     state.left_split_pct = Some(pct.saturating_sub(5).max(30));
                                 }
                                 KeyCode::Char(']') => {
                                     let pct = state.left_split_pct.unwrap_or_else(|| {
-                                        state.phase.main_split_ratio(!state.evolution.all_weights().is_empty()).0
+                                        state
+                                            .phase
+                                            .main_split_ratio(
+                                                !state.evolution.all_weights().is_empty(),
+                                            )
+                                            .0
                                     });
                                     state.left_split_pct = Some((pct + 5).min(85));
                                 }
                                 KeyCode::Char('p') if !state.agent_done => {
                                     // Cancel current agent operation
-                                    if let Some(f) = tui_input.stop_flag.as_ref() { f.store(true, std::sync::atomic::Ordering::Relaxed) }
+                                    if let Some(f) = tui_input.stop_flag.as_ref() {
+                                        f.store(true, std::sync::atomic::Ordering::Relaxed)
+                                    }
                                     push_log(&mut state, "取消当前操作...".into(), false);
                                 }
-                                KeyCode::Char('f') if state.focused_panel == FocusedPanel::MiniLog || (!matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing) && state.focused_panel == FocusedPanel::MainLeft) => {
+                                KeyCode::Char('f')
+                                    if state.focused_panel == FocusedPanel::MiniLog
+                                        || (!matches!(
+                                            state.phase,
+                                            AgentPhase::Planning | AgentPhase::Executing
+                                        ) && state.focused_panel == FocusedPanel::MainLeft) =>
+                                {
                                     state.log_filter = state.log_filter.next();
                                 }
                                 KeyCode::Char('l')
@@ -952,7 +1129,11 @@ where
                                 {
                                     match export_to_file(&state) {
                                         Some((filename, _)) => {
-                                            push_log(&mut state, format!("已导出: {filename}"), false);
+                                            push_log(
+                                                &mut state,
+                                                format!("已导出: {filename}"),
+                                                false,
+                                            );
                                         }
                                         None => {
                                             push_log(&mut state, "导出失败".into(), true);
@@ -966,7 +1147,14 @@ where
                                     if key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
                                     state.kanban_visible = !state.kanban_visible;
-                                    let msg = format!("看板: {}", if state.kanban_visible { "已显示" } else { "已隐藏" });
+                                    let msg = format!(
+                                        "看板: {}",
+                                        if state.kanban_visible {
+                                            "已显示"
+                                        } else {
+                                            "已隐藏"
+                                        }
+                                    );
                                     push_log(&mut state, msg, false);
                                 }
                                 KeyCode::Char('t')
@@ -989,9 +1177,7 @@ where
                                         push_log(&mut state, "已关闭标签".into(), false);
                                     }
                                 }
-                                KeyCode::Left
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
+                                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                     if state.session_tabs.len() > 1 {
                                         if state.active_tab_index > 0 {
                                             state.active_tab_index -= 1;
@@ -1000,9 +1186,7 @@ where
                                         }
                                     }
                                 }
-                                KeyCode::Right
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
+                                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                     if state.session_tabs.len() > 1 {
                                         if state.active_tab_index + 1 < state.session_tabs.len() {
                                             state.active_tab_index += 1;
@@ -1018,26 +1202,30 @@ where
                                     }
                                 }
                                 KeyCode::Tab => {
-                                    if matches!(
-                                        state.phase,
-                                        AgentPhase::Planning | AgentPhase::Executing
-                                    ) && state.focused_panel == FocusedPanel::MainLeft
-                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
-                                    {
-                                        state.left_tab = state.left_tab.next();
-                                    } else if state.phase == AgentPhase::Idle
-                                        && state.agent_done
-                                        && state.focused_panel == FocusedPanel::MainLeft
-                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
-                                    {
-                                        state.results_visible = !state.results_visible;
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                        // Ctrl+Tab: switch left tab when MainLeft focused during Planning/Executing
+                                        if matches!(
+                                            state.phase,
+                                            AgentPhase::Planning | AgentPhase::Executing
+                                        ) && state.focused_panel == FocusedPanel::MainLeft
+                                        {
+                                            state.left_tab = state.left_tab.next();
+                                        }
                                     } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         if state.search_match_lines.is_empty() {
                                             state.focused_panel = state.focused_panel.prev();
                                         }
                                     } else if state.search_match_lines.is_empty() {
                                         state.focused_panel = state.focused_panel.next();
+                                        if state.agent_done
+                                            && state.focused_panel == FocusedPanel::Input
+                                        {
+                                            begin_next_task_input(&mut state, &tui_input);
+                                        }
                                     }
+                                }
+                                KeyCode::Char('i') if state.agent_done => {
+                                    begin_next_task_input(&mut state, &tui_input);
                                 }
                                 // Scroll focused panel
                                 KeyCode::Up | KeyCode::Char('k') => {
@@ -1118,12 +1306,25 @@ where
                                         if let Some(idx) = state.exec_selected_index {
                                             open_step_overlay(&mut state, idx);
                                         }
+                                    } else if state.phase == AgentPhase::Idle
+                                        && state.agent_done
+                                        && state.results_visible
+                                        && state.focused_panel == FocusedPanel::MainLeft
+                                    {
+                                        if let Some(idx) = state.exec_selected_index {
+                                            open_step_overlay(&mut state, idx);
+                                        } else if !state.executions.is_empty() {
+                                            open_step_overlay(&mut state, 0);
+                                        }
                                     } else if state.focused_panel == FocusedPanel::Evolution {
                                         toggle_evolution_section(&mut state);
                                     } else {
                                         // Fallback: focus the input bar (Tab to cycle panels)
                                         state.focused_panel = FocusedPanel::Input;
                                     }
+                                }
+                                KeyCode::Char(_) => {
+                                    state.focused_panel = FocusedPanel::Input;
                                 }
                                 _ => {}
                             }
@@ -1157,24 +1358,69 @@ where
     });
 
     // ── Run agent ──
-    let result = agent.run_loop(ctx).await;
+    let stop_flag = ctx.stop_flag();
+    let mut next_ctx = ctx;
+    let result = loop {
+        let result = agent.run_loop(next_ctx).await;
+        let stop_requested = stop_flag.load(std::sync::atomic::Ordering::Relaxed);
 
-    // Signal completion — preserve real summary from agent output
-    {
-        let mut state = app_state.write();
-        state.agent_done = true;
-        state.results_visible = true;
-        state.phase = AgentPhase::Idle;
-        state.log_scroll = 0; // reset scroll so results panel shows from top
-        if let Err(ref e) = result {
-            let message = format!("执行失败: {e}");
-            push_log(&mut state, message.clone(), true);
-            state.summary = Some(message);
-        } else if state.summary.is_none() {
-            // Don't overwrite real summary with boilerplate
-            state.summary = Some("完成 — 按 q 或 Esc 退出".into());
+        // Signal completion — preserve real summary from agent output.
+        {
+            let mut state = app_state.write();
+            state.agent_done = true;
+            state.results_visible = true;
+            state.phase = AgentPhase::Idle;
+            state.log_scroll = 0; // reset scroll so results panel shows from top
+            if let Err(ref e) = result {
+                let message = format!("执行失败: {e}");
+                push_log(&mut state, message.clone(), true);
+                state.summary = Some(message);
+            } else if state.summary.is_none() {
+                // Don't overwrite real summary with boilerplate
+                state.summary = Some("完成 — 可继续输入下一条任务".into());
+            }
         }
-    }
+
+        if result.is_err() || stop_requested {
+            break result;
+        }
+
+        tui_input
+            .awaiting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let submitted = loop {
+            if app_state.read().should_quit {
+                break None;
+            }
+            if let Some(text) = tui_input.submitted.lock().take() {
+                break Some(text);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        tui_input
+            .awaiting
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+
+        let Some(text) = submitted else {
+            break result;
+        };
+        let text = text.trim().to_string();
+        if text.is_empty() || matches!(text.as_str(), "exit" | "quit") {
+            let mut state = app_state.write();
+            state.should_quit = true;
+            break result;
+        }
+
+        {
+            let mut state = app_state.write();
+            state.agent_done = false;
+            state.phase = AgentPhase::Observing;
+            state.focused_panel = FocusedPanel::MainLeft;
+            state.results_visible = true;
+        }
+        next_ctx =
+            agent_core::context::Context::new(Some(text)).with_stop_flag(Arc::clone(&stop_flag));
+    };
 
     match tui_task.await {
         Ok(Ok(())) => {}
@@ -1195,10 +1441,45 @@ fn apply_delta(current: u16, delta: i16) -> u16 {
     }
 }
 
+fn input_line_count_for(text: &str) -> u8 {
+    text.split('\n').count().clamp(1, 8) as u8
+}
+
+fn footer_height_for(state: &TuiAppState) -> u16 {
+    if state.awaiting_input || state.search_active || state.slash_command_active {
+        state.input_line_count.max(1) as u16 + 1
+    } else {
+        1
+    }
+}
+
+fn session_tabs_height_for(state: &TuiAppState) -> u16 {
+    if state.session_tabs.len() > 1 {
+        1
+    } else {
+        0
+    }
+}
+
+fn is_ctrl_c(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Char('c') | KeyCode::Char('C'))
+        && modifiers.contains(KeyModifiers::CONTROL)
+}
+
+fn request_tui_quit(state: &mut TuiAppState, tui_input: &TuiInput) {
+    state.should_quit = true;
+    if let Some(flag) = tui_input.stop_flag.as_ref() {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    *tui_input.submitted.lock() = Some(String::new());
+}
+
 // ── Settings helpers ──
 
 fn settings_toggle(state: &mut TuiAppState, label: &str) {
-    if label == "启用搜索" { state.user_settings.search_enabled = !state.user_settings.search_enabled }
+    if label == "启用搜索" {
+        state.user_settings.search_enabled = !state.user_settings.search_enabled
+    }
 }
 
 fn settings_cycle_dropdown(state: &mut TuiAppState, label: &str) {
@@ -1211,12 +1492,16 @@ fn settings_cycle_dropdown(state: &mut TuiAppState, label: &str) {
             };
         }
         "金融数据源" => {
-            state.user_settings.finance_provider = match state.user_settings.finance_provider.as_str() {
-                "" => "sina".into(),
-                "sina" => "tushare".into(),
-                "tushare" => "ftshare".into(),
-                _ => String::new(),
-            };
+            state.user_settings.finance_provider =
+                match state.user_settings.finance_provider.as_str() {
+                    "" => "ftshare".into(),
+                    "ftshare" => "tushare".into(),
+                    "tushare" => "eastmoney".into(),
+                    "eastmoney" => "tencent".into(),
+                    "tencent" => "sina".into(),
+                    "sina" => "ftshare".into(),
+                    _ => "ftshare".into(),
+                };
         }
         "预设主题" => {
             let names = crate::theme::Theme::preset_names();
@@ -1239,6 +1524,8 @@ fn settings_get_text(state: &TuiAppState, label: &str) -> String {
         "搜索 Key" => s.search_api_key.clone(),
         "金融数据源" => s.finance_provider.clone(),
         "TuShare Token" => s.finance_tushare_token.clone(),
+        "App ID" => s.feishu_app_id.clone(),
+        "App Secret" => s.feishu_app_secret.clone(),
         _ => String::new(),
     }
 }
@@ -1253,7 +1540,17 @@ fn settings_apply_text(state: &mut TuiAppState, label: &str) {
         "搜索 Key" => state.user_settings.search_api_key = val,
         "金融数据源" => state.user_settings.finance_provider = val,
         "TuShare Token" => state.user_settings.finance_tushare_token = val,
+        "App ID" => state.user_settings.feishu_app_id = val,
+        "App Secret" => state.user_settings.feishu_app_secret = val,
         _ => {}
+    }
+}
+
+fn left_tab_for_click(relative_col: u16) -> Option<LeftTab> {
+    match relative_col {
+        1..=6 => Some(LeftTab::Plan),
+        8..=13 => Some(LeftTab::Execution),
+        _ => None,
     }
 }
 
@@ -1269,9 +1566,7 @@ fn open_step_overlay(state: &mut TuiAppState, idx: usize) {
             full_content: step
                 .content_full
                 .clone()
-                .unwrap_or_else(|| {
-                    step.content_preview.clone().unwrap_or_default()
-                }),
+                .unwrap_or_else(|| step.content_preview.clone().unwrap_or_default()),
             scroll: 0,
         });
     }
@@ -1321,15 +1616,26 @@ fn export_to_file(state: &TuiAppState) -> Option<(String, String)> {
             let text = if !state.streaming_buffer.is_empty() {
                 state.streaming_buffer.clone()
             } else {
-                state.executions.iter().map(|s| {
-                    format!("[{}] {} ({:?}ms)\n{}",
-                        if matches!(s.status, crate::state::StepStatus::Success) { "OK" }
-                        else if matches!(s.status, crate::state::StepStatus::Failed) { "FAIL" }
-                        else { "..." },
-                        s.tool,
-                        s.duration_ms.unwrap_or(0),
-                        s.content_full.as_deref().unwrap_or(""))
-                }).collect::<Vec<_>>().join("\n\n")
+                state
+                    .executions
+                    .iter()
+                    .map(|s| {
+                        format!(
+                            "[{}] {} ({:?}ms)\n{}",
+                            if matches!(s.status, crate::state::StepStatus::Success) {
+                                "OK"
+                            } else if matches!(s.status, crate::state::StepStatus::Failed) {
+                                "FAIL"
+                            } else {
+                                "..."
+                            },
+                            s.tool,
+                            s.duration_ms.unwrap_or(0),
+                            s.content_full.as_deref().unwrap_or("")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
             };
             (format!("hermess_plan_{ts}.txt"), text)
         }
@@ -1338,7 +1644,10 @@ fn export_to_file(state: &TuiAppState) -> Option<(String, String)> {
             if let Some(ref summary) = state.summary {
                 text.push_str(&format!("Result: {}\n\n", summary));
             }
-            text.push_str(&format!("Steps: {}/{}\n", state.exec_completed_steps, state.exec_total_steps));
+            text.push_str(&format!(
+                "Steps: {}/{}\n",
+                state.exec_completed_steps, state.exec_total_steps
+            ));
             if let Some(dur) = state.total_duration_ms {
                 text.push_str(&format!("Duration: {:.1}s\n\n", dur as f64 / 1000.0));
             }
@@ -1426,7 +1735,14 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
         }
         "/model" => {
             let msg = if rest.is_empty() {
-                format!("当前模型: {}", if state.user_settings.llm_model.is_empty() { "(默认)" } else { &state.user_settings.llm_model })
+                format!(
+                    "当前模型: {}",
+                    if state.user_settings.llm_model.is_empty() {
+                        "(默认)"
+                    } else {
+                        &state.user_settings.llm_model
+                    }
+                )
             } else {
                 state.user_settings.llm_model = rest;
                 state.settings_dirty = true;
@@ -1437,10 +1753,7 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
         "/personality" => {
             let personalities = vec!["default", "concise", "verbose", "creative", "analytical"];
             let lines = if rest.is_empty() {
-                let mut lines = vec![
-                    "可用人格:".into(),
-                    String::new(),
-                ];
+                let mut lines = vec!["可用人格:".into(), String::new()];
                 for p in &personalities {
                     lines.push(format!("  - {}", p));
                 }
@@ -1480,8 +1793,22 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
                 format!("  日志条目: {}", state.log_entries.len()),
                 format!("  输入历史: {} 条", state.input_history.len()),
                 String::new(),
-                format!("  Gateway: {}", if state.gateway_enabled { "已启用" } else { "未启用" }),
-                format!("  路由模式: {}", if state.gateway_mode.is_empty() { "(默认)" } else { &state.gateway_mode }),
+                format!(
+                    "  Gateway: {}",
+                    if state.gateway_enabled {
+                        "已启用"
+                    } else {
+                        "未启用"
+                    }
+                ),
+                format!(
+                    "  路由模式: {}",
+                    if state.gateway_mode.is_empty() {
+                        "(默认)"
+                    } else {
+                        &state.gateway_mode
+                    }
+                ),
             ];
             state.slash_command_popup = Some(crate::state::SlashResult {
                 title: "Status".into(),
@@ -1495,10 +1822,24 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             let strategy_count = state.evolution.strategy_count();
             let mut lines = vec![
                 format!("  回合: {}  阶段: {:?}", state.turn, state.phase),
-                format!("  日志条目: {}  错误: {}", state.log_entries.len(), state.log_entries.iter().filter(|e| e.is_error).count()),
-                format!("  进化引擎: {} insights, {} strategies", insight_count, strategy_count),
-                format!("  当前学习率: {:.5}", state.evolution.current_learning_rate()),
-                format!("  Gateway: {}  模型数: {}", state.gateway_enabled, state.gateway_models.len()),
+                format!(
+                    "  日志条目: {}  错误: {}",
+                    state.log_entries.len(),
+                    state.log_entries.iter().filter(|e| e.is_error).count()
+                ),
+                format!(
+                    "  进化引擎: {} insights, {} strategies",
+                    insight_count, strategy_count
+                ),
+                format!(
+                    "  当前学习率: {:.5}",
+                    state.evolution.current_learning_rate()
+                ),
+                format!(
+                    "  Gateway: {}  模型数: {}",
+                    state.gateway_enabled,
+                    state.gateway_models.len()
+                ),
                 format!("  Settings dirty: {}", state.settings_dirty),
                 String::new(),
                 "  策略权重:".into(),
@@ -1522,7 +1863,10 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             let mut lines = vec![
                 format!("  回合数: {}", state.turn),
                 format!("  耗时: {}", elapsed),
-                format!("  已执行步骤: {} / {}", state.exec_completed_steps, state.exec_total_steps),
+                format!(
+                    "  已执行步骤: {} / {}",
+                    state.exec_completed_steps, state.exec_total_steps
+                ),
                 format!("  进化统计: {} 条 insight", state.evolution.insight_count()),
                 String::new(),
             ];
@@ -1531,8 +1875,14 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
                 lines.push("  ── Token 用量 ──".into());
                 lines.push(format!("  Prompt tokens:     {}", snap.prompt_tokens));
                 lines.push(format!("  Completion tokens: {}", snap.completion_tokens));
-                lines.push(format!("  Total tokens:      {}", snap.prompt_tokens + snap.completion_tokens));
-                lines.push(format!("  估算费用:          ${:.6}", snap.estimated_cost_usd));
+                lines.push(format!(
+                    "  Total tokens:      {}",
+                    snap.prompt_tokens + snap.completion_tokens
+                ));
+                lines.push(format!(
+                    "  估算费用:          ${:.6}",
+                    snap.estimated_cost_usd
+                ));
                 lines.push(String::new());
                 lines.push(format!("  模型: {}", snap.model));
                 lines.push(format!("  总调用次数: {}", snap.total_calls));
@@ -1565,7 +1915,10 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
                                         } else {
                                             format!("{}d ago", dur.as_secs() / 86400)
                                         };
-                                        let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                        let name = path
+                                            .file_stem()
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_default();
                                         lines.push(format!("  {}  ({})", name, age));
                                     }
                                 }
@@ -1590,13 +1943,15 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
         }
         "/skills" => {
             let mut lines: Vec<String> = Vec::new();
-            let skills_dir = home_dir().join(".claude")
-                .join("skills");
+            let skills_dir = home_dir().join(".claude").join("skills");
             if skills_dir.exists() {
                 if let Ok(entries) = std::fs::read_dir(&skills_dir) {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().to_string();
-                        let ft = entry.file_type().map(|t| if t.is_dir() { "/" } else { "" }).unwrap_or("");
+                        let ft = entry
+                            .file_type()
+                            .map(|t| if t.is_dir() { "/" } else { "" })
+                            .unwrap_or("");
                         lines.push(format!("  {}{}", name, ft));
                     }
                 }
@@ -1615,9 +1970,15 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
         "/checkpoint" => {
             let lines = vec![
                 format!("  回合数: {}", state.turn),
-                format!("  步骤: {}/{} 已完成", state.exec_completed_steps, state.exec_total_steps),
+                format!(
+                    "  步骤: {}/{} 已完成",
+                    state.exec_completed_steps, state.exec_total_steps
+                ),
                 format!("  日志条目: {} 个", state.log_entries.len()),
-                format!("  错误: {} 个", state.log_entries.iter().filter(|e| e.is_error).count()),
+                format!(
+                    "  错误: {} 个",
+                    state.log_entries.iter().filter(|e| e.is_error).count()
+                ),
                 format!("  看板条目: {} 个", state.kanban_items.len()),
                 format!("  进化 insights: {} 条", state.evolution.insight_count()),
                 String::new(),
@@ -1630,10 +1991,18 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             });
         }
         "/rollback" => {
-            push_log(state, "[rollback] 功能需要后端事件 plumbing，暂不可用。".into(), false);
+            push_log(
+                state,
+                "[rollback] 功能需要后端事件 plumbing，暂不可用。".into(),
+                false,
+            );
         }
         "/diff" => {
-            push_log(state, "[diff] 功能需要后端事件 plumbing，暂不可用。".into(), false);
+            push_log(
+                state,
+                "[diff] 功能需要后端事件 plumbing，暂不可用。".into(),
+                false,
+            );
         }
         "/new" => {
             state.turn = 0;
@@ -1657,15 +2026,25 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             if rest.is_empty() {
                 state.slash_command_popup = Some(crate::state::SlashResult {
                     title: "Load Session".into(),
-                    lines: vec!["用法: /load <会话名>".into(), String::new(), "已保存会话可通过 /sessions 查看。".into()],
+                    lines: vec![
+                        "用法: /load <会话名>".into(),
+                        String::new(),
+                        "已保存会话可通过 /sessions 查看。".into(),
+                    ],
                     scroll: 0,
                 });
             } else {
-                let session_path = home_dir().join(".hermess").join("sessions").join(format!("{}.json", rest));
+                let session_path = home_dir()
+                    .join(".hermess")
+                    .join("sessions")
+                    .join(format!("{}.json", rest));
                 match std::fs::read_to_string(&session_path) {
                     Ok(content) => {
                         let preview: String = content.chars().take(200).collect();
-                        let name = session_path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let name = session_path
+                            .file_stem()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
                         let mut lines = vec![
                             format!("  会话名: {}", name),
                             format!("  大小: {} 字节", content.len()),
@@ -1690,7 +2069,10 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
                     Err(_) => {
                         state.slash_command_popup = Some(crate::state::SlashResult {
                             title: "Load Session".into(),
-                            lines: vec!["未找到会话".into(), format!("  路径: {}", session_path.display())],
+                            lines: vec![
+                                "未找到会话".into(),
+                                format!("  路径: {}", session_path.display()),
+                            ],
                             scroll: 0,
                         });
                     }
@@ -1724,7 +2106,11 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
         "/compress" => {
             state.slash_command_popup = Some(crate::state::SlashResult {
                 title: "Compress".into(),
-                lines: vec!["请求压缩当前对话上下文".into(), String::new(), "(需要后端上下文压缩支持)".into()],
+                lines: vec![
+                    "请求压缩当前对话上下文".into(),
+                    String::new(),
+                    "(需要后端上下文压缩支持)".into(),
+                ],
                 scroll: 0,
             });
         }
@@ -1758,7 +2144,14 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             state.slash_command_popup = Some(crate::state::SlashResult {
                 title: "Kanban".into(),
                 lines: vec![
-                    format!("  看板: {}", if state.kanban_visible { "已显示" } else { "已隐藏" }),
+                    format!(
+                        "  看板: {}",
+                        if state.kanban_visible {
+                            "已显示"
+                        } else {
+                            "已隐藏"
+                        }
+                    ),
                     String::new(),
                     "  提示: Ctrl+K 也可切换看板。".into(),
                 ],
@@ -1766,7 +2159,11 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             });
         }
         _ => {
-            push_log(state, format!("未知命令: {}. 输入 : /help 查看可用命令。", head), false);
+            push_log(
+                state,
+                format!("未知命令: {}. 输入 : /help 查看可用命令。", head),
+                false,
+            );
         }
     }
 }
@@ -1782,7 +2179,11 @@ fn push_log(state: &mut TuiAppState, message: String, is_error: bool) {
             return;
         }
     }
-    state.log_entries.push_back(LogEntry { message: clean, is_error, repeat_count: 0 });
+    state.log_entries.push_back(LogEntry {
+        message: clean,
+        is_error,
+        repeat_count: 0,
+    });
     if state.log_auto_scroll {
         state.log_scroll = 10_000; // large enough to force bottom-scroll without overflow
     }
@@ -1791,16 +2192,14 @@ fn push_log(state: &mut TuiAppState, message: String, is_error: bool) {
 fn scroll_focused(state: &mut TuiAppState, delta: i16) {
     match state.focused_panel {
         FocusedPanel::MainLeft => match state.phase {
-            AgentPhase::Planning | AgentPhase::Executing => {
-                match state.left_tab {
-                    crate::state::LeftTab::Plan => {
-                        state.plan_scroll = apply_delta(state.plan_scroll, delta);
-                    }
-                    crate::state::LeftTab::Execution => {
-                        state.exec_scroll = apply_delta(state.exec_scroll, delta);
-                    }
+            AgentPhase::Planning | AgentPhase::Executing => match state.left_tab {
+                crate::state::LeftTab::Plan => {
+                    state.plan_scroll = apply_delta(state.plan_scroll, delta);
                 }
-            }
+                crate::state::LeftTab::Execution => {
+                    state.exec_scroll = apply_delta(state.exec_scroll, delta);
+                }
+            },
             _ => {
                 state.log_scroll = apply_delta(state.log_scroll, delta);
                 if delta < 0 {
@@ -1856,7 +2255,9 @@ fn scroll_to_bottom(state: &mut TuiAppState) {
         }
         FocusedPanel::MainLeft => match state.phase {
             AgentPhase::Planning | AgentPhase::Executing => {}
-            _ => { state.log_auto_scroll = true; }
+            _ => {
+                state.log_auto_scroll = true;
+            }
         },
         _ => {}
     }
@@ -1881,9 +2282,11 @@ fn get_focused_panel_lines(state: &TuiAppState) -> Vec<String> {
     match state.focused_panel {
         FocusedPanel::MainLeft => match state.phase {
             AgentPhase::Planning | AgentPhase::Executing => match state.left_tab {
-                crate::state::LeftTab::Plan => {
-                    state.streaming_buffer.lines().map(|s| s.to_string()).collect()
-                }
+                crate::state::LeftTab::Plan => state
+                    .streaming_buffer
+                    .lines()
+                    .map(|s| s.to_string())
+                    .collect(),
                 crate::state::LeftTab::Execution => state
                     .executions
                     .iter()
@@ -1898,32 +2301,25 @@ fn get_focused_panel_lines(state: &TuiAppState) -> Vec<String> {
                             .content_full
                             .as_deref()
                             .unwrap_or(s.content_preview.as_deref().unwrap_or(""));
-                        format!("[{}] {} | {}", status, s.tool, crate::state::strip_ansi(content))
+                        format!(
+                            "[{}] {} | {}",
+                            status,
+                            s.tool,
+                            crate::state::strip_ansi(content)
+                        )
                     })
                     .collect(),
             },
             _ => state
                 .log_entries
                 .iter()
-                .map(|e| {
-                    format!(
-                        "{} {}",
-                        if e.is_error { "[!]" } else { "[*]" },
-                        e.message
-                    )
-                })
+                .map(|e| format!("{} {}", if e.is_error { "[!]" } else { "[*]" }, e.message))
                 .collect(),
         },
         FocusedPanel::MiniLog | FocusedPanel::Input => state
             .log_entries
             .iter()
-            .map(|e| {
-                format!(
-                    "{} {}",
-                    if e.is_error { "[!]" } else { "[*]" },
-                    e.message
-                )
-            })
+            .map(|e| format!("{} {}", if e.is_error { "[!]" } else { "[*]" }, e.message))
             .collect(),
         FocusedPanel::Evolution => {
             // Evolution panel: collect weight lines
@@ -1973,12 +2369,16 @@ fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, c
     let mut state = app_state.write();
     let term_size = crossterm::terminal::size().unwrap_or((80, 24));
 
-    let needs_mini_log = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
+    let has_left_tabs = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
 
     let header_h = 1;
-    let footer_h = 1;
-    let mini_log_h = if needs_mini_log { 3 } else { 0 };
-    let main_h = term_size.1.saturating_sub(header_h + footer_h + mini_log_h);
+    let session_tabs_h = session_tabs_height_for(&state);
+    let footer_h = footer_height_for(&state);
+    let mini_log_h = 0;
+    let main_top = header_h + session_tabs_h;
+    let main_h = term_size
+        .1
+        .saturating_sub(header_h + session_tabs_h + footer_h + mini_log_h);
 
     let (left_pct, _right_pct) = state.split_pct();
 
@@ -1988,12 +2388,15 @@ fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, c
     if row < header_h {
         return; // header, not scrollable
     }
+    if row < main_top {
+        return; // session tab bar, not scrollable
+    }
 
-    let in_main = row < header_h + main_h;
+    let in_main = row < main_top + main_h;
     let in_left = col < left_w;
 
-    // Tab bar row during Planning/Executing is not scrollable
-    if in_main && in_left && needs_mini_log && row == header_h {
+    // Left panel tab row during Planning/Executing is not scrollable
+    if in_main && in_left && has_left_tabs && row == main_top {
         return;
     }
 
@@ -2015,9 +2418,6 @@ fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, c
     } else if in_main && !in_left {
         // Evolution panel
         state.evo_scroll = apply_delta(state.evo_scroll, delta);
-    } else if needs_mini_log {
-        // Mini-log area
-        state.log_scroll = apply_delta(state.log_scroll, delta);
     }
 }
 
@@ -2026,12 +2426,16 @@ fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, col: u16, row:
     let mut state = app_state.write();
     let term_size = crossterm::terminal::size().unwrap_or((80, 24));
 
-    let needs_mini_log = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
+    let has_left_tabs = matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing);
 
     let header_h = 1;
-    let footer_h = 1;
-    let mini_log_h = if needs_mini_log { 3 } else { 0 };
-    let main_h = term_size.1.saturating_sub(header_h + footer_h + mini_log_h);
+    let session_tabs_h = session_tabs_height_for(&state);
+    let footer_h = footer_height_for(&state);
+    let mini_log_h = 0;
+    let main_top = header_h + session_tabs_h;
+    let main_h = term_size
+        .1
+        .saturating_sub(header_h + session_tabs_h + footer_h + mini_log_h);
 
     let (left_pct, _right_pct) = state.split_pct();
 
@@ -2041,30 +2445,31 @@ fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, col: u16, row:
     if row < header_h {
         return;
     }
-
-    // Input/footer row
-    if row >= header_h + main_h + mini_log_h {
-        if state.awaiting_input {
-            state.focused_panel = FocusedPanel::Input;
-        }
+    if row < main_top {
         return;
     }
 
-    let in_main = row < header_h + main_h;
+    // Input/footer row
+    if row >= main_top + main_h + mini_log_h {
+        state.focused_panel = FocusedPanel::Input;
+        return;
+    }
+
+    let in_main = row < main_top + main_h;
     let in_left = col < left_w;
 
     if in_main && in_left {
         // Click on left main panel
         // Check for tab bar click during Planning/Executing
-        if needs_mini_log && row == header_h {
-            state.left_tab = state.left_tab.next();
+        if has_left_tabs && row == main_top {
+            if let Some(tab) = left_tab_for_click(col) {
+                state.left_tab = tab;
+            }
             return;
         }
         state.focused_panel = FocusedPanel::MainLeft;
     } else if in_main && !in_left {
         state.focused_panel = FocusedPanel::Evolution;
-    } else if needs_mini_log {
-        state.focused_panel = FocusedPanel::MiniLog;
     }
 }
 
@@ -2081,30 +2486,32 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
         AgentEvent::TurnStarted { turn } => {
             state.turn = turn;
             state.phase = AgentPhase::Observing;
-            state.streaming_buffer.clear();
-            state.summary_streaming_buffer.clear();
-            state.plan_steps_count = 0;
-            state.plan_ready = false;
-            state.executions.clear();
-            state.exec_total_steps = 0;
-            state.exec_completed_steps = 0;
-            state.summary = None;
-            state.plan_scroll = 0;
-            state.exec_scroll = 0;
-            state.exec_selected_index = None;
+            state.agent_done = false;
             state.results_visible = true;
             // Don't set left_tab here — PlanPhaseStarted or ExecutePhaseStarted
-            // will set it when the actual phase begins, avoiding flicker.
+            // will set it when the actual phase begins. In interactive mode this
+            // event is emitted before waiting for the next prompt, so keep the
+            // previous result visible until real work starts.
         }
         AgentEvent::PlanPhaseStarted => {
             state.phase = AgentPhase::Planning;
             state.streaming_buffer.clear();
+            state.summary_streaming_buffer.clear();
+            state.summary = None;
+            state.executions.clear();
+            state.exec_total_steps = 0;
+            state.exec_completed_steps = 0;
+            state.exec_selected_index = None;
             state.plan_ready = false;
+            state.plan_steps_count = 0;
             state.left_tab = LeftTab::Plan;
             state.plan_scroll = 0;
+            state.exec_scroll = 0;
         }
         AgentEvent::PlanStreamingToken { token } => {
-            state.streaming_buffer.push_str(&crate::state::strip_html(&token));
+            state
+                .streaming_buffer
+                .push_str(&crate::state::strip_html(&token));
         }
         AgentEvent::PlanReady { steps_count } => {
             state.plan_steps_count = steps_count;
@@ -2199,7 +2606,11 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
         AgentEvent::ExecutePhaseComplete { duration_ms, .. } => {
             state.phase = AgentPhase::Reflecting;
             state.total_duration_ms = Some(duration_ms);
-            push_log(state, format!("执行完成 ({:.1}s)", duration_ms as f64 / 1000.0), false);
+            push_log(
+                state,
+                format!("执行完成 ({:.1}s)", duration_ms as f64 / 1000.0),
+                false,
+            );
         }
         AgentEvent::SubAgentStarted { task } => {
             push_log(state, format!("子任务开始: {}", task), false);
@@ -2218,23 +2629,35 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
         AgentEvent::ReplanComplete { new_steps_count } => {
             state.plan_steps_count = new_steps_count;
             state.plan_ready = true;
-            push_log(state, format!("重规划完成: {new_steps_count} 个步骤"), false);
+            push_log(
+                state,
+                format!("重规划完成: {new_steps_count} 个步骤"),
+                false,
+            );
         }
         AgentEvent::ReflectPhaseStarted => {
             state.phase = AgentPhase::Reflecting;
         }
         AgentEvent::ReflectPhaseComplete { score, lesson } => {
             state.phase = AgentPhase::Evolving;
-            push_log(state, format!("反思: score={:.2} | {}", score, lesson), score < 0.0);
+            push_log(
+                state,
+                format!("反思: score={:.2} | {}", score, lesson),
+                score < 0.0,
+            );
         }
         AgentEvent::EvolvePhaseStarted => {
             state.phase = AgentPhase::Evolving;
         }
         AgentEvent::EvolvePhaseComplete => {
             state.phase = AgentPhase::Idle;
+            state.agent_done = true;
+            state.results_visible = true;
         }
         AgentEvent::SummaryStreamingToken { token } => {
-            state.summary_streaming_buffer.push_str(&crate::state::strip_html(&token));
+            state
+                .summary_streaming_buffer
+                .push_str(&crate::state::strip_html(&token));
         }
         AgentEvent::SummaryReady { summary } => {
             state.summary_streaming_buffer.clear();
@@ -2242,11 +2665,22 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             push_log(state, format!("结果: {}", clean_summary), false);
             state.summary = Some(clean_summary);
         }
-        AgentEvent::GatewayModelsDiscovered { models, gateway_url } => {
+        AgentEvent::GatewayModelsDiscovered {
+            models,
+            gateway_url,
+        } => {
             state.gateway_url = gateway_url.clone();
             state.gateway_models = models.clone();
             state.gateway_enabled = true;
-            push_log(state, format!("Gateway: 发现 {} 个模型: {}", models.len(), models.join(", ")), false);
+            push_log(
+                state,
+                format!(
+                    "Gateway: 发现 {} 个模型: {}",
+                    models.len(),
+                    models.join(", ")
+                ),
+                false,
+            );
         }
         AgentEvent::GatewayRouteDecision {
             model,
@@ -2256,13 +2690,33 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state.last_route_decision = Some(format!("{model}: {reason}"));
             state.shg_triggered = shg_triggered;
             let shg_label = if shg_triggered { " [SHG]" } else { "" };
-            push_log(state, format!("路由决策{shg_label}: → {model} ({reason})"), false);
+            push_log(
+                state,
+                format!("路由决策{shg_label}: → {model} ({reason})"),
+                false,
+            );
         }
         AgentEvent::TaskUpdated {
             task_id,
             title,
             status,
         } => {
+            let kanban_status = match status {
+                TaskStatus::Pending => crate::state::KanbanStatus::Pending,
+                TaskStatus::InProgress => crate::state::KanbanStatus::InProgress,
+                TaskStatus::Completed => crate::state::KanbanStatus::Completed,
+            };
+            // Update existing or insert new kanban item
+            if let Some(item) = state.kanban_items.iter_mut().find(|ki| ki.id == task_id) {
+                item.status = kanban_status;
+                item.title = title.clone();
+            } else {
+                state.kanban_items.push(crate::state::KanbanItem {
+                    id: task_id.clone(),
+                    title: title.clone(),
+                    status: kanban_status,
+                });
+            }
             let status_str = match status {
                 TaskStatus::Pending => "pending",
                 TaskStatus::InProgress => "in-progress",
@@ -2270,7 +2724,10 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             };
             push_log(
                 state,
-                format!("任务更新 [{status_str}]: {title} (#{})", &task_id[..8.min(task_id.len())]),
+                format!(
+                    "任务更新 [{status_str}]: {title} (#{})",
+                    &task_id[..8.min(task_id.len())]
+                ),
                 false,
             );
         }
@@ -2350,11 +2807,25 @@ mod tests {
         assert_eq!(apply_delta(10, 0), 10);
     }
 
-    // ── handle_event: TurnStarted resets state ──
+    #[test]
+    fn test_input_line_count_for_single_line() {
+        assert_eq!(input_line_count_for("hello"), 1);
+        assert_eq!(input_line_count_for(""), 1);
+    }
 
     #[test]
-    fn test_turn_started_resets_execution() {
+    fn test_input_line_count_for_multiline_clamps_to_eight() {
+        let text = "1\n2\n3\n4\n5\n6\n7\n8\n9";
+        assert_eq!(input_line_count_for("hello\nworld"), 2);
+        assert_eq!(input_line_count_for(text), 8);
+    }
+
+    // ── handle_event: TurnStarted preserves previous result while awaiting input ──
+
+    #[test]
+    fn test_turn_started_preserves_previous_result() {
         let mut state = make_state();
+        state.agent_done = true;
         state.executions.push(StepExecState {
             step_id: uuid::Uuid::new_v4(),
             tool: "bash".into(),
@@ -2369,31 +2840,62 @@ mod tests {
         state.streaming_buffer = "plan content".into();
         state.plan_ready = true;
         state.plan_steps_count = 3;
+        state.summary = Some("previous answer".into());
 
         handle_event(&mut state, AgentEvent::TurnStarted { turn: 2 });
 
         assert_eq!(state.turn, 2);
         assert_eq!(state.phase, AgentPhase::Observing);
-        assert!(state.executions.is_empty());
-        assert_eq!(state.exec_total_steps, 0);
-        assert_eq!(state.exec_completed_steps, 0);
-        assert!(state.streaming_buffer.is_empty());
-        assert!(!state.plan_ready);
-        assert_eq!(state.plan_steps_count, 0);
+        assert!(!state.agent_done);
+        assert_eq!(state.executions.len(), 1);
+        assert_eq!(state.exec_total_steps, 1);
+        assert_eq!(state.exec_completed_steps, 1);
+        assert_eq!(state.streaming_buffer, "plan content");
+        assert!(state.plan_ready);
+        assert_eq!(state.plan_steps_count, 3);
+        assert_eq!(state.summary.as_deref(), Some("previous answer"));
         assert_eq!(state.left_tab, LeftTab::Execution);
-        assert!(state.exec_selected_index.is_none());
+        assert!(state.results_visible);
+    }
+
+    #[test]
+    fn test_evolve_complete_marks_turn_done() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Evolving;
+        state.agent_done = false;
+
+        handle_event(&mut state, AgentEvent::EvolvePhaseComplete);
+
+        assert_eq!(state.phase, AgentPhase::Idle);
+        assert!(state.agent_done);
         assert!(state.results_visible);
     }
 
     // ── handle_event: PlanPhaseStarted switches tab ──
 
     #[test]
-    fn test_plan_phase_started_switches_tab() {
+    fn test_plan_phase_started_resets_previous_result_and_switches_tab() {
         let mut state = make_state();
+        state.summary = Some("previous answer".into());
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: Some("output".into()),
+            content_full: Some("full output".into()),
+            duration_ms: Some(100),
+            layer: 0,
+        });
+        state.exec_total_steps = 1;
+        state.exec_completed_steps = 1;
         handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
         handle_event(&mut state, AgentEvent::PlanPhaseStarted);
         assert_eq!(state.phase, AgentPhase::Planning);
         assert_eq!(state.left_tab, LeftTab::Plan);
+        assert!(state.summary.is_none());
+        assert!(state.executions.is_empty());
+        assert_eq!(state.exec_total_steps, 0);
+        assert_eq!(state.exec_completed_steps, 0);
     }
 
     // ── handle_event: ExecutePhaseStarted switches tab back ──
@@ -2412,6 +2914,62 @@ mod tests {
         assert_eq!(state.exec_total_steps, 5);
         assert!(state.executions.is_empty());
         assert!(state.exec_selected_index.is_none());
+    }
+
+    #[test]
+    fn test_settings_close_dirty_requires_confirmation() {
+        let mut state = make_state();
+        state.settings_visible = true;
+        state.settings_dirty = true;
+
+        close_settings_or_confirm_discard(&mut state);
+
+        assert!(state.settings_visible);
+        assert!(state.settings_dirty);
+        assert!(state.settings_dirty_confirm);
+    }
+
+    #[test]
+    fn test_settings_text_supports_feishu_fields() {
+        let mut state = make_state();
+
+        state.settings_edit_buffer = "cli_test".into();
+        settings_apply_text(&mut state, "App ID");
+        state.settings_edit_buffer = "secret_test".into();
+        settings_apply_text(&mut state, "App Secret");
+
+        assert_eq!(settings_get_text(&state, "App ID"), "cli_test");
+        assert_eq!(settings_get_text(&state, "App Secret"), "secret_test");
+        assert_eq!(state.user_settings.feishu_app_id, "cli_test");
+        assert_eq!(state.user_settings.feishu_app_secret, "secret_test");
+    }
+
+    #[test]
+    fn test_submit_tui_input_latches_once() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        *tui_input.buffer.lock() = "first".into();
+        *tui_input.cursor.lock() = 5;
+
+        assert!(submit_tui_input(&mut state, &tui_input, "first".into()));
+        assert!(!state.awaiting_input);
+        assert!(!tui_input
+            .awaiting
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(tui_input.submitted.lock().as_deref(), Some("first"));
+
+        assert!(!submit_tui_input(&mut state, &tui_input, String::new()));
+        assert_eq!(tui_input.submitted.lock().as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn test_left_tab_for_click_selects_by_column() {
+        assert_eq!(left_tab_for_click(1), Some(LeftTab::Plan));
+        assert_eq!(left_tab_for_click(6), Some(LeftTab::Plan));
+        assert_eq!(left_tab_for_click(8), Some(LeftTab::Execution));
+        assert_eq!(left_tab_for_click(13), Some(LeftTab::Execution));
+        assert_eq!(left_tab_for_click(20), None);
     }
 
     // ── handle_event: StepStarted + StepCompleted ──

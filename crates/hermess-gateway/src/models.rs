@@ -42,7 +42,13 @@ pub struct ModelCapability {
 
 impl Default for ModelCapability {
     fn default() -> Self {
-        Self { reasoning: 0.5, coding: 0.5, creative: 0.5, knowledge: 0.5, speed_ms: 1000 }
+        Self {
+            reasoning: 0.5,
+            coding: 0.5,
+            creative: 0.5,
+            knowledge: 0.5,
+            speed_ms: 1000,
+        }
     }
 }
 
@@ -77,7 +83,11 @@ pub struct Classification {
 
 impl Default for Classification {
     fn default() -> Self {
-        Self { complexity: 0.5, is_short_hard: false, suggested_tags: vec![] }
+        Self {
+            complexity: 0.5,
+            is_short_hard: false,
+            suggested_tags: vec![],
+        }
     }
 }
 
@@ -107,6 +117,18 @@ pub struct ChatCompletionRequest {
     pub temperature: Option<f64>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub top_p: Option<f64>,
+    #[serde(default)]
+    pub n: Option<u32>,
+    #[serde(default)]
+    pub stop: Option<serde_json::Value>,
+    #[serde(default)]
+    pub presence_penalty: Option<f64>,
+    #[serde(default)]
+    pub frequency_penalty: Option<f64>,
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,18 +208,30 @@ mod tests {
 
     #[test]
     fn parse_route_mode_cost() {
-        assert_eq!("cost-first".parse::<RouteMode>().unwrap(), RouteMode::CostFirst);
-        assert_eq!("cost_first".parse::<RouteMode>().unwrap(), RouteMode::CostFirst);
+        assert_eq!(
+            "cost-first".parse::<RouteMode>().unwrap(),
+            RouteMode::CostFirst
+        );
+        assert_eq!(
+            "cost_first".parse::<RouteMode>().unwrap(),
+            RouteMode::CostFirst
+        );
     }
 
     #[test]
     fn parse_route_mode_quality() {
-        assert_eq!("quality-first".parse::<RouteMode>().unwrap(), RouteMode::QualityFirst);
+        assert_eq!(
+            "quality-first".parse::<RouteMode>().unwrap(),
+            RouteMode::QualityFirst
+        );
     }
 
     #[test]
     fn parse_route_mode_latency() {
-        assert_eq!("latency-first".parse::<RouteMode>().unwrap(), RouteMode::LatencyFirst);
+        assert_eq!(
+            "latency-first".parse::<RouteMode>().unwrap(),
+            RouteMode::LatencyFirst
+        );
     }
 
     #[test]

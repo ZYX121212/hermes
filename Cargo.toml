@@ -2,6 +2,7 @@
 members = [
     "crates/agent-core",
     "crates/hermess-agent",
+    "crates/hermess-finance",
     "crates/evolution",
     "crates/planner",
     "crates/memory",
@@ -16,19 +17,25 @@ members = [
 ]
 resolver = "2"
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [workspace.dependencies]
 tokio          = { version = "1", features = ["full"] }
 async-trait    = "0.1"
 serde          = { version = "1", features = ["derive"] }
 serde_json     = "1"
 toml           = "0.8"
-reqwest        = { version = "0.12", features = ["json", "stream"] }
+reqwest        = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli"] }
 dashmap        = "6"
 parking_lot    = "0.12"
 arc-swap       = "1"
 qdrant-client  = "1"
 tracing        = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow         = "1"
 thiserror      = "1"
 clap           = { version = "4", features = ["derive"] }
@@ -43,6 +50,9 @@ crossterm      = "0.28"
 name = "hermes"
 version = "0.1.0"
 edition = "2021"
+description = "Self-evolving LLM agent framework with gateway routing, tools, memory, and TUI"
+license = "MIT"
+repository = "https://github.com/nova/hermess"
 
 [[bin]]
 name = "hermes"
@@ -61,6 +71,7 @@ scheduler = { path = "crates/scheduler" }
 tui = { path = "crates/tui" }
 mcp = { path = "crates/mcp" }
 hermess-gateway = { path = "crates/hermess-gateway" }
+hermess-finance = { path = "crates/hermess-finance" }
 crossterm.workspace = true
 tokio.workspace = true
 clap.workspace = true
@@ -76,5 +87,5 @@ chrono.workspace = true
 futures.workspace = true
 axum = "0.8"
 reqwest.workspace = true
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
 tower = "0.5"

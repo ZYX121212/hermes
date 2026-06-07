@@ -20,7 +20,11 @@ pub fn render_input(frame: &mut Frame, area: Rect, state: &TuiAppState, focused:
     if state.awaiting_input {
         // Active task input mode: show cursor and text
         render_text_input(
-            frame, area, state, focused, border_color,
+            frame,
+            area,
+            state,
+            focused,
+            border_color,
             InputContent {
                 label: "TASK",
                 text: &state.input_text,
@@ -34,7 +38,11 @@ pub fn render_input(frame: &mut Frame, area: Rect, state: &TuiAppState, focused:
         );
     } else if state.slash_command_active {
         render_text_input(
-            frame, area, state, focused, border_color,
+            frame,
+            area,
+            state,
+            focused,
+            border_color,
             InputContent {
                 label: "CMD",
                 text: &state.slash_command_buffer,
@@ -58,23 +66,24 @@ pub fn render_input(frame: &mut Frame, area: Rect, state: &TuiAppState, focused:
             String::new()
         };
         render_text_input(
-            frame, area, state, focused, border_color,
+            frame,
+            area,
+            state,
+            focused,
+            border_color,
             InputContent {
                 label: "SEARCH",
                 text: &state.search_query,
                 cursor: state.input_cursor,
-                hints: &format!(
-                    "   Enter 搜索  |  Esc 取消  |  n/N 导航{}",
-                    match_info
-                ),
+                hints: &format!("   Enter 搜索  |  Esc 取消  |  n/N 导航{}", match_info),
             },
         );
     } else {
         // Idle / agent done: show prompt
         let hint = if state.agent_done {
-            " 完成 — 输入新任务或按 q 退出"
+            " 完成 — Tab 到此或按 i 继续输入"
         } else {
-            " 等待中 — 按 Tab 切换至此输入新任务"
+            " 运行中 — 输入将在 agent 请求时启用"
         };
         let spans: Vec<Span> = vec![
             Span::styled(
@@ -90,10 +99,16 @@ pub fn render_input(frame: &mut Frame, area: Rect, state: &TuiAppState, focused:
             ),
             Span::styled(
                 hint,
-                Style::default().fg(if focused { theme::MUTED } else { theme::SUBTLE }).bg(theme::PANEL_ALT),
+                Style::default()
+                    .fg(if focused { theme::MUTED } else { theme::SUBTLE })
+                    .bg(theme::PANEL_ALT),
             ),
             Span::styled(
-                if focused { "   Enter 开始输入  |  / 搜索" } else { "   Tab 切换至此以输入" },
+                if focused {
+                    "   i 输入  |  / 搜索  |  : 命令"
+                } else {
+                    "   Tab 切换焦点  |  i 输入"
+                },
                 Style::default().fg(theme::SUBTLE).bg(theme::PANEL_ALT),
             ),
         ];
@@ -119,13 +134,21 @@ fn render_text_input(
     border_color: ratatui::style::Color,
     content: InputContent<'_>,
 ) {
-    let cursor_char = if state.frame_count % 16 < 8 { "▌" } else { " " };
+    let cursor_char = if state.frame_count % 16 < 8 {
+        "▌"
+    } else {
+        " "
+    };
     let text = content.text;
     let cursor = content.cursor.min(text.chars().count());
     let label_bg = if focused { theme::CYAN } else { theme::MUTED };
 
     // Split into lines
-    let input_lines: Vec<&str> = if text.is_empty() { vec![""] } else { text.split('\n').collect() };
+    let input_lines: Vec<&str> = if text.is_empty() {
+        vec![""]
+    } else {
+        text.split('\n').collect()
+    };
 
     // Find cursor position (which line, which column)
     let mut char_count = 0usize;
@@ -154,9 +177,15 @@ fn render_text_input(
         if i == start_line {
             spans.push(Span::styled(
                 format!(" {} ", content.label),
-                Style::default().fg(theme::BG).bg(label_bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::BG)
+                    .bg(label_bg)
+                    .add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(" │ ", Style::default().fg(border_color).bg(theme::PANEL_ALT)));
+            spans.push(Span::styled(
+                " │ ",
+                Style::default().fg(border_color).bg(theme::PANEL_ALT),
+            ));
         } else {
             spans.push(Span::styled(
                 " ".repeat(label_width),
@@ -170,14 +199,26 @@ fn render_text_input(
             let before: String = line_chars[..col].iter().collect();
             let after: String = line_chars[col..].iter().collect();
             if !before.is_empty() {
-                spans.push(Span::styled(before, Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT)));
+                spans.push(Span::styled(
+                    before,
+                    Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT),
+                ));
             }
-            spans.push(Span::styled(cursor_char, Style::default().fg(theme::CYAN).bg(theme::PANEL_ALT)));
+            spans.push(Span::styled(
+                cursor_char,
+                Style::default().fg(theme::CYAN).bg(theme::PANEL_ALT),
+            ));
             if !after.is_empty() {
-                spans.push(Span::styled(after, Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT)));
+                spans.push(Span::styled(
+                    after,
+                    Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT),
+                ));
             }
         } else {
-            spans.push(Span::styled(line, Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT)));
+            spans.push(Span::styled(
+                line,
+                Style::default().fg(theme::TEXT).bg(theme::PANEL_ALT),
+            ));
         }
 
         all_lines.push(Line::from(spans));

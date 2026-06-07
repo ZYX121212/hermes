@@ -1,6 +1,8 @@
 [package]
 name = "hermess-gateway"
 version = "0.1.0"
+description = "Intelligent LLM routing gateway with complexity-based model selection"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
@@ -10,6 +12,7 @@ tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 toml.workspace = true
+serde_yaml = "0.9"
 clap = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -20,6 +23,11 @@ uuid = { workspace = true, features = ["v4"] }
 chrono.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
+reqwest = { workspace = true, features = ["json"] }
+axum = "0.8"

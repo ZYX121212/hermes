@@ -150,10 +150,12 @@ async fn main() -> anyhow::Result<()> {
     let evolution_handle = Arc::clone(&evolution);
 
     // ── 飞书 API 客户端 ────────────────────────────────────
-    let app_id = cli.feishu_app_id
+    let app_id = cli
+        .feishu_app_id
         .or_else(|| std::env::var("FEISHU_APP_ID").ok())
         .unwrap_or_else(|| cfg.feishu.app_id.clone());
-    let app_secret = cli.feishu_app_secret
+    let app_secret = cli
+        .feishu_app_secret
         .or_else(|| std::env::var("FEISHU_APP_SECRET").ok())
         .unwrap_or_else(|| cfg.feishu.app_secret.clone());
 
@@ -161,15 +163,15 @@ async fn main() -> anyhow::Result<()> {
     let feishu_client_rw = Arc::new(RwLock::new(Arc::clone(&feishu_client)));
 
     // ── 飞书 Wiki/Docs/Drive Tools ──────────────────────────
-    tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuWikiTool::new(Arc::clone(&feishu_client_rw)),
-    ));
-    tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuDocsTool::new(Arc::clone(&feishu_client_rw)),
-    ));
-    tools.register(Arc::new(
-        hermess_web::feishu::tools::FeishuDriveTool::new(Arc::clone(&feishu_client_rw)),
-    ));
+    tools.register(Arc::new(hermess_web::feishu::tools::FeishuWikiTool::new(
+        Arc::clone(&feishu_client_rw),
+    )));
+    tools.register(Arc::new(hermess_web::feishu::tools::FeishuDocsTool::new(
+        Arc::clone(&feishu_client_rw),
+    )));
+    tools.register(Arc::new(hermess_web::feishu::tools::FeishuDriveTool::new(
+        Arc::clone(&feishu_client_rw),
+    )));
 
     // ── 会话管理器 ─────────────────────────────────────────
     let sessions = Arc::new(SessionManager::new(

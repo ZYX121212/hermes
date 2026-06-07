@@ -25,8 +25,14 @@ pub trait HermesAgent: Send + Sync + 'static {
             }
             tracing::info!("Turn starting: observe phase");
             let obs = self.observe(&ctx).await?;
+            if ctx.should_stop() {
+                break;
+            }
             tracing::info!("Plan phase");
             let plan = self.plan(obs).await?;
+            if ctx.should_stop() {
+                break;
+            }
             tracing::info!(steps = plan.steps.len(), "Execute phase");
             let result = self.execute(plan).await?;
             tracing::info!(

@@ -154,6 +154,7 @@ impl VectorMemory {
                             content: content.to_string(),
                             embedding,
                             timestamp: chrono::Utc::now(),
+                            importance: 1.0,
                         })
                     })
                     .collect()
@@ -308,6 +309,7 @@ mod tests {
             content: "hello world".into(),
             embedding: vec![],
             timestamp: chrono::Utc::now(),
+            importance: 1.0,
         };
         store.upsert(chunk.clone()).await.unwrap();
         let results = store.search("hello", 5).await.unwrap();
@@ -324,12 +326,14 @@ mod tests {
             content: "first".into(),
             embedding: vec![],
             timestamp: chrono::Utc::now(),
+            importance: 1.0,
         };
         let chunk2 = MemoryChunk {
             id,
             content: "second".into(),
             embedding: vec![],
             timestamp: chrono::Utc::now(),
+            importance: 1.0,
         };
         store.upsert(chunk1).await.unwrap();
         store.upsert(chunk2).await.unwrap();

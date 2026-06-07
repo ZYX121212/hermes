@@ -26,15 +26,18 @@ pub struct DiscoveryProvider {
     pub default_tags: Vec<String>,
 }
 
-fn default_discovery_cost_input() -> f64 { 0.5 }
-fn default_discovery_cost_output() -> f64 { 2.0 }
+fn default_discovery_cost_input() -> f64 {
+    0.5
+}
+fn default_discovery_cost_output() -> f64 {
+    2.0
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GatewaySection {
     #[serde(default = "default_listen")]
     pub listen: String,
     #[serde(default)]
-    #[allow(dead_code)]
     pub api_key: String,
     #[serde(default = "default_mode")]
     pub default_mode: RouteMode,
@@ -111,28 +114,10 @@ impl Default for ShgConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct OptimizerConfig {
     #[serde(default)]
     pub decompose_enabled: bool,
-    #[serde(default)]
-    pub distill_enabled: bool,
-    #[serde(default = "default_distill_ratio")]
-    pub distill_keep_ratio: f64,
-}
-
-fn default_distill_ratio() -> f64 {
-    0.2
-}
-
-impl Default for OptimizerConfig {
-    fn default() -> Self {
-        Self {
-            decompose_enabled: false,
-            distill_enabled: false,
-            distill_keep_ratio: 0.2,
-        }
-    }
 }
 
 impl GatewayConfig {
@@ -153,10 +138,12 @@ impl GatewayConfig {
                 let mut var = String::new();
                 let mut default = String::new();
                 let mut in_default = false;
+                let mut found_close = false;
                 for c in chars.by_ref() {
                     if c == ':' && !in_default {
                         in_default = true;
                     } else if c == '}' {
+                        found_close = true;
                         break;
                     } else if in_default {
                         default.push(c);
@@ -164,8 +151,18 @@ impl GatewayConfig {
                         var.push(c);
                     }
                 }
-                let val = std::env::var(&var).unwrap_or(default);
-                out.push_str(&val);
+                if found_close {
+                    let val = std::env::var(&var).unwrap_or(default);
+                    out.push_str(&val);
+                } else {
+                    // Missing closing '}', pass through literal text
+                    out.push_str("${");
+                    out.push_str(&var);
+                    if in_default {
+                        out.push(':');
+                        out.push_str(&default);
+                    }
+                }
             } else {
                 out.push(ch);
             }

@@ -57,11 +57,17 @@ impl UsageTracker {
 
     /// 返回当前累计：调用次数、输入 tokens、输出 tokens、费用
     pub fn snapshot(&self) -> UsageSnapshot {
+        let prompt = *self.prompt_tokens.lock();
+        let completion = *self.completion_tokens.lock();
+        let calls = *self.total_calls.lock();
+        let pricing = match_model(&self.model);
+        let cost = (prompt as f64 / 1_000_000.0) * pricing.input_price
+            + (completion as f64 / 1_000_000.0) * pricing.output_price;
         UsageSnapshot {
-            total_calls: *self.total_calls.lock(),
-            prompt_tokens: *self.prompt_tokens.lock(),
-            completion_tokens: *self.completion_tokens.lock(),
-            estimated_cost_usd: self.estimated_cost_usd(),
+            total_calls: calls,
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            estimated_cost_usd: cost,
             model: self.model.clone(),
         }
     }

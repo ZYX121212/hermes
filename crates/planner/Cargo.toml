@@ -1,6 +1,8 @@
 [package]
 name = "planner"
 version = "0.1.0"
+description = "LLM-driven task decomposition into executable step DAGs"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
@@ -15,3 +17,8 @@ anyhow.workspace = true
 futures.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+chrono.workspace = true
+memory = { path = "../memory" }
+tempfile = "3"

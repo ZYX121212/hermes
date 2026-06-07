@@ -71,12 +71,16 @@ impl Tool for BashTool {
                 tracing::warn!("{msg}");
                 return Ok(ToolOutput::error(msg));
             }
-            // Ask 模式：通过 _danger_flag 标记，由上层（TUI/CLI）处理确认
-            // 在上层确认之前先不执行，返回等待确认的状态
-            tracing::warn!(
-                "危险命令需要确认: {}",
-                DangerGuard::summarize(cmd)
-            );
+            // Ask 模式：当前无交互式确认通道，拒绝执行以确保安全
+            // 上层（TUI/CLI）应在调用前自行确认，或使用 Deny/Skip 策略
+            if self.guard.policy() == ConfirmationPolicy::Ask {
+                let msg = format!(
+                    "危险命令需要用户确认后才能执行: {}。请使用更安全的替代命令，或调整安全策略。",
+                    DangerGuard::summarize(cmd)
+                );
+                tracing::warn!("{msg}");
+                return Ok(ToolOutput::error(msg));
+            }
         }
 
         match tokio::process::Command::new("bash")

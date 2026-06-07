@@ -74,6 +74,8 @@ impl HermesAgent for TestAgent {
             user_input: ctx.task().unwrap_or("test task").to_string(),
             env_state: serde_json::json!({}),
             memory_ctx: self.working_memory.recent(5),
+            conversation_history: vec![],
+            recent_insights: vec![],
         })
     }
 
@@ -93,6 +95,7 @@ impl HermesAgent for TestAgent {
                 ),
                 embedding: vec![],
                 timestamp: chrono::Utc::now(),
+                importance: 1.0,
             });
         }
         Ok(result)

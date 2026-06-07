@@ -38,13 +38,11 @@ impl ModelRegistry {
 
     /// Return the cheapest model (lowest combined input+output cost).
     pub fn cheapest(&self) -> Option<&ModelEntry> {
-        self.models
-            .iter()
-            .min_by(|a, b| {
-                (a.cost_per_1m_input + a.cost_per_1m_output)
-                    .partial_cmp(&(b.cost_per_1m_input + b.cost_per_1m_output))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        self.models.iter().min_by(|a, b| {
+            (a.cost_per_1m_input + a.cost_per_1m_output)
+                .partial_cmp(&(b.cost_per_1m_input + b.cost_per_1m_output))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// Return the model with the highest capability score for a given dimension.
@@ -70,9 +68,7 @@ impl ModelRegistry {
 
     /// Return the fastest model (lowest speed_ms).
     pub fn fastest(&self) -> Option<&ModelEntry> {
-        self.models
-            .iter()
-            .min_by_key(|m| m.capability.speed_ms)
+        self.models.iter().min_by_key(|m| m.capability.speed_ms)
     }
 
     /// Return model satisfying min capability score on a dimension, with lowest cost.
@@ -87,14 +83,11 @@ impl ModelRegistry {
             };
             score >= min_score
         };
-        self.models
-            .iter()
-            .filter(min_cap)
-            .min_by(|a, b| {
-                (a.cost_per_1m_input + a.cost_per_1m_output)
-                    .partial_cmp(&(b.cost_per_1m_input + b.cost_per_1m_output))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        self.models.iter().filter(min_cap).min_by(|a, b| {
+            (a.cost_per_1m_input + a.cost_per_1m_output)
+                .partial_cmp(&(b.cost_per_1m_input + b.cost_per_1m_output))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     pub fn len(&self) -> usize {

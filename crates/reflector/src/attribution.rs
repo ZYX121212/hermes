@@ -48,6 +48,7 @@ mod tests {
             }],
             success: true,
             duration_ms: 100,
+            user_input: None,
         };
         let s = attribute_errors(&result);
         assert!(s.contains("All"));
@@ -75,6 +76,7 @@ mod tests {
             ],
             success: false,
             duration_ms: 600,
+            user_input: None,
         };
         let s = attribute_errors(&result);
         assert!(s.contains("1 out of 2"));

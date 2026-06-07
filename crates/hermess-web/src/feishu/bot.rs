@@ -121,10 +121,7 @@ impl FeishuBot {
         if msg.message.message_type != "text" {
             let _ = self
                 .client
-                .reply_text(
-                    &msg.message.message_id,
-                    "暂不支持该消息类型，请发送文字。",
-                )
+                .reply_text(&msg.message.message_id, "暂不支持该消息类型，请发送文字。")
                 .await;
             return;
         }
@@ -139,7 +136,11 @@ impl FeishuBot {
 
         let (reply, _errors) = server::run_agent_once(&self.sessions, &user_id, &content).await;
 
-        if let Err(e) = self.client.reply_text(&msg.message.message_id, &reply).await {
+        if let Err(e) = self
+            .client
+            .reply_text(&msg.message.message_id, &reply)
+            .await
+        {
             tracing::error!(error = %e, %user_id, "failed to send reply");
         }
     }

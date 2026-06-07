@@ -132,8 +132,14 @@ pub fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDef> {
             kind: FieldKind::Dropdown,
         }],
         SettingsTab::Feishu => vec![
-            FieldDef { label: "App ID", kind: FieldKind::Text },
-            FieldDef { label: "App Secret", kind: FieldKind::Text },
+            FieldDef {
+                label: "App ID",
+                kind: FieldKind::Text,
+            },
+            FieldDef {
+                label: "App Secret",
+                kind: FieldKind::Text,
+            },
         ],
     }
 }
@@ -219,6 +225,10 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
                 " Esc 取消 ",
                 Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
             ),
+            Span::styled(
+                " Tab 切换页 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
         ]
     } else {
         let dirty_hint = if state.settings_dirty {
@@ -231,6 +241,10 @@ pub fn render_settings(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         };
         let mut base = vec![
             Span::styled(" ↑↓ 导航 ", Style::default().fg(theme::BG).bg(theme::CYAN)),
+            Span::styled(
+                " Tab 切换页 ",
+                Style::default().fg(theme::SUBTLE).bg(theme::PANEL),
+            ),
             Span::styled(
                 " Enter 编辑 ",
                 Style::default().fg(theme::SUBTLE).bg(theme::PANEL),

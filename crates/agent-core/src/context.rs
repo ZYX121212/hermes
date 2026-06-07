@@ -46,13 +46,18 @@ impl Context {
     /// Create an interactive context that runs until Ctrl+C,
     /// reading new tasks from stdin each iteration.
     pub fn interactive() -> Self {
+        Self::interactive_with_task(None)
+    }
+
+    /// Create an interactive context, optionally seeding the first task.
+    pub fn interactive_with_task(task: Option<String>) -> Self {
         let ctx = Self {
             task: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
             max_iterations: 0, // unlimited
             iteration: Arc::new(AtomicU64::new(0)),
             interactive: true,
-            interactive_task: Arc::new(Mutex::new(String::new())),
+            interactive_task: Arc::new(Mutex::new(task.unwrap_or_default())),
         };
         let flag = Arc::clone(&ctx.stop_flag);
         tokio::spawn(async move {
@@ -98,6 +103,16 @@ impl Context {
         trimmed
     }
 
+    /// Take a seeded interactive task, if one exists.
+    pub fn take_seeded_interactive_task(&self) -> Option<String> {
+        let mut task = self.interactive_task.lock().unwrap();
+        if task.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut *task))
+        }
+    }
+
     /// Replace the internal stop flag with an external one (for TUI integration).
     pub fn with_stop_flag(mut self, flag: Arc<AtomicBool>) -> Self {
         self.stop_flag = flag;
@@ -139,5 +154,23 @@ impl Context {
     /// (after evolve + summarize). Returns the new count.
     pub fn advance_iteration(&self) -> u64 {
         self.iteration.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn interactive_with_task_seeds_first_task_once() {
+        let ctx = Context::interactive_with_task(Some("first task".into()));
+
+        assert!(ctx.is_interactive());
+        assert_eq!(
+            ctx.take_seeded_interactive_task().as_deref(),
+            Some("first task")
+        );
+        assert!(ctx.take_seeded_interactive_task().is_none());
+        assert!(!ctx.should_stop());
     }
 }

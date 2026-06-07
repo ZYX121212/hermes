@@ -107,21 +107,23 @@ pub enum FocusedPanel {
 }
 
 impl FocusedPanel {
+    /// Tab cycling: MainLeft → Evolution → Input (skip invisible MiniLog).
     pub fn next(self) -> Self {
         match self {
             FocusedPanel::MainLeft => FocusedPanel::Evolution,
-            FocusedPanel::Evolution => FocusedPanel::MiniLog,
+            FocusedPanel::Evolution => FocusedPanel::Input,
             FocusedPanel::MiniLog => FocusedPanel::Input,
             FocusedPanel::Input => FocusedPanel::MainLeft,
         }
     }
 
+    /// Shift+Tab cycling: Input → Evolution → MainLeft.
     pub fn prev(self) -> Self {
         match self {
             FocusedPanel::MainLeft => FocusedPanel::Input,
             FocusedPanel::Evolution => FocusedPanel::MainLeft,
             FocusedPanel::MiniLog => FocusedPanel::Evolution,
-            FocusedPanel::Input => FocusedPanel::MiniLog,
+            FocusedPanel::Input => FocusedPanel::Evolution,
         }
     }
 }
@@ -678,22 +680,17 @@ mod tests {
 
     #[test]
     fn test_focused_panel_cycle() {
-        let start = FocusedPanel::MainLeft;
-        let next = start.next();
-        let next2 = next.next();
-        let next3 = next2.next();
-        let next4 = next3.next();
-        assert_eq!(
-            next4, start,
-            "4×next should return to start (4 panels in cycle)"
-        );
-        let prev = start.prev();
-        assert_eq!(prev, next3, "prev from start should equal next3");
-        assert_eq!(
-            prev.prev(),
-            next2,
-            "prev-prev from start should equal next2"
-        );
+        // 3 visible panels: MainLeft -> Evolution -> Input -> MainLeft
+        assert_eq!(FocusedPanel::MainLeft.next(), FocusedPanel::Evolution);
+        assert_eq!(FocusedPanel::Evolution.next(), FocusedPanel::Input);
+        assert_eq!(FocusedPanel::Input.next(), FocusedPanel::MainLeft);
+        // MiniLog invisible, skips to Input
+        assert_eq!(FocusedPanel::MiniLog.next(), FocusedPanel::Input);
+
+        assert_eq!(FocusedPanel::Input.prev(), FocusedPanel::Evolution);
+        assert_eq!(FocusedPanel::Evolution.prev(), FocusedPanel::MainLeft);
+        assert_eq!(FocusedPanel::MainLeft.prev(), FocusedPanel::Input);
+        assert_eq!(FocusedPanel::MiniLog.prev(), FocusedPanel::Evolution);
     }
 
     // ── LeftTab ──

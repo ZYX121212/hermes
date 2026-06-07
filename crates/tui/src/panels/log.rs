@@ -7,7 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::state::{clamp_scroll, render_scrollbar, wrapped_line_count, LogEntry, LogFilter, TuiAppState};
+use crate::state::{
+    clamp_scroll, render_scrollbar, wrapped_line_count, LogEntry, LogFilter, TuiAppState,
+};
 use crate::theme;
 
 pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: bool) {
@@ -85,10 +87,7 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
                 format!(" {marker} "),
                 Style::default().fg(color).bg(theme::PANEL),
             ),
-            Span::styled(
-                display_msg,
-                Style::default().fg(color).bg(theme::PANEL),
-            ),
+            Span::styled(display_msg, Style::default().fg(color).bg(theme::PANEL)),
         ]));
     }
 
@@ -111,7 +110,10 @@ pub fn render_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: b
         .block(block)
         .style(Style::default().fg(theme::TEXT).bg(theme::PANEL))
         .wrap(Wrap { trim: false })
-        .scroll((clamp_scroll(state.log_scroll, content_height, viewport_h), 0));
+        .scroll((
+            clamp_scroll(state.log_scroll, content_height, viewport_h),
+            0,
+        ));
 
     frame.render_widget(para, area);
 
@@ -177,7 +179,10 @@ pub fn render_mini_log(frame: &mut Frame, area: Rect, state: &TuiAppState, focus
             } else {
                 truncated
             };
-            Line::from(Span::styled(display_msg, Style::default().fg(color).bg(theme::PANEL)))
+            Line::from(Span::styled(
+                display_msg,
+                Style::default().fg(color).bg(theme::PANEL),
+            ))
         })
         .collect();
 

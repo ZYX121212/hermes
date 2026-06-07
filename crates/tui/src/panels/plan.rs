@@ -55,7 +55,11 @@ pub fn render_plan(frame: &mut Frame, area: Rect, state: &TuiAppState, focused: 
 
     // Scrollbar (single widget for performance)
     if line_count > vh as usize {
-        let bar = render_scrollbar(clamp_scroll(state.plan_scroll, line_count, vh), line_count, vh);
+        let bar = render_scrollbar(
+            clamp_scroll(state.plan_scroll, line_count, vh),
+            line_count,
+            vh,
+        );
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {

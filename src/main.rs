@@ -131,8 +131,39 @@ struct Config {
 
 impl Config {
     fn from_file(path: &str) -> anyhow::Result<Self> {
-        let s = std::fs::read_to_string(path)?;
-        Ok(toml::from_str(&s)?)
+        let raw = std::fs::read_to_string(path)?;
+        let interpolated = Self::interpolate_env(&raw);
+        Ok(toml::from_str(&interpolated)?)
+    }
+
+    /// Replace `${VAR_NAME}` or `${VAR_NAME:default}` with env var values.
+    fn interpolate_env(raw: &str) -> String {
+        let mut out = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'{') {
+                chars.next();
+                let mut var = String::new();
+                let mut default = String::new();
+                let mut in_default = false;
+                for c in chars.by_ref() {
+                    if c == ':' && !in_default {
+                        in_default = true;
+                    } else if c == '}' {
+                        break;
+                    } else if in_default {
+                        default.push(c);
+                    } else {
+                        var.push(c);
+                    }
+                }
+                let val = std::env::var(&var).unwrap_or(default);
+                out.push_str(&val);
+            } else {
+                out.push(ch);
+            }
+        }
+        out
     }
 }
 
@@ -153,11 +184,11 @@ struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: "anthropic".into(),
-            model: "claude-sonnet-4-5-20251001".into(),
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
             max_tokens: 4096,
-            api_key: String::new(),
-            base_url: String::new(),
+            api_key: "sk-4ab52089feed4d788eee376dfaa4bbb3".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
         }
     }
 }
@@ -287,14 +318,26 @@ fn default_latency_target() -> u64 {
 
 // ── Main ─────────────────────────────────────────────────────
 
+fn init_tracing(tui_mode: bool) {
+    use std::env;
+    let use_json = env::var("LOG_FORMAT").map(|v| v == "json").unwrap_or(false);
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+    if tui_mode {
+        builder.with_writer(std::io::sink).init();
+        return;
+    }
+    if use_json {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let cli = Cli::parse();
+    init_tracing(cli.tui);
 
     if cli.gateway {
         return run_gateway(&cli.gateway_config).await;
@@ -310,6 +353,30 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut cfg = Config::from_file(&config_path)?;
+
+    // ── Apply settings.json overrides (above config file, below CLI) ──
+    let mut user_settings = tui::UserSettings::load();
+    user_settings.apply_env_overrides();
+    if !user_settings.llm_provider.is_empty() {
+        tracing::info!(
+            provider = %user_settings.llm_provider,
+            model = %user_settings.llm_model,
+            "Applying user settings from .hermess/settings.json"
+        );
+        cfg.llm.provider = user_settings.llm_provider.clone();
+    }
+    if !user_settings.llm_model.is_empty() {
+        cfg.llm.model = user_settings.llm_model.clone();
+    }
+    if !user_settings.llm_api_key.is_empty() {
+        cfg.llm.api_key = user_settings.llm_api_key.clone();
+    }
+    if !user_settings.llm_base_url.is_empty() {
+        cfg.llm.base_url = user_settings.llm_base_url.clone();
+    }
+    if user_settings.search_enabled && !user_settings.search_api_key.is_empty() {
+        cfg.search.api_key = Some(user_settings.search_api_key.clone());
+    }
 
     // ── Apply CLI overrides to config ─────────────────────
     if let Some(v) = cli.api_key {
@@ -369,9 +436,14 @@ async fn main() -> anyhow::Result<()> {
                     .or_else(|_| std::env::var("DEEPSEEK_API_KEY"))
                     .unwrap_or_default();
                 if k.is_empty() {
-                    tracing::warn!("No OpenAI/DeepSeek API key configured — API calls will fail");
+                    // Fall back to hardcoded DeepSeek default so the agent
+                    // works out of the box even without any configuration.
+                    let default_key = "sk-4ab52089feed4d788eee376dfaa4bbb3";
+                    tracing::info!("Using default DeepSeek API key");
+                    default_key.to_string()
+                } else {
+                    k
                 }
-                k
             } else {
                 cfg.llm.api_key.clone()
             };
@@ -456,6 +528,33 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Register financial data tool with automatic failover.
+    // Resolution order: env var > settings.json.
+    // When a primary provider fails (network error / unsupported query),
+    // the composite automatically falls back to the next available provider.
+    let finance_provider_name = std::env::var("HERMESS_FINANCE_PROVIDER").ok().or_else(|| {
+        match user_settings.finance_provider.as_str() {
+            "ftshare" | "tushare" | "none" | "null" => Some(user_settings.finance_provider.clone()),
+            // Legacy free-provider settings should not demote FTShare. Users can still force
+            // them with HERMESS_FINANCE_PROVIDER=sina/eastmoney/tencent.
+            _ => None,
+        }
+    });
+    let finance_provider = hermess_finance::providers::defaults::build_finance_provider(
+        hermess_finance::providers::defaults::FinanceProviderOptions {
+            provider: finance_provider_name,
+            ftshare_url: std::env::var("HERMESS_FINANCE_URL").ok(),
+            tushare_token: std::env::var("HERMESS_TUSHARE_TOKEN").ok().or_else(|| {
+                (!user_settings.finance_tushare_token.is_empty())
+                    .then(|| user_settings.finance_tushare_token.clone())
+            }),
+            allow_disable: true,
+        },
+    );
+    tools.register(Arc::new(hermess_finance::tool::FinancialTool::new(
+        finance_provider,
+    )));
+
     let evolution = Arc::new(
         evolution::EvolutionEngine::load_from_file(
             ".hermes_evolution.json",
@@ -470,7 +569,8 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!(error = %e, "Failed to load evolution state, starting fresh");
             }
             evolution::EvolutionEngine::new(cfg.learning_rate, Arc::clone(&memory))
-        }),
+        })
+        .with_auto_save(".hermes_evolution.json"),
     );
 
     let mut planner = planner::Planner::new(
@@ -480,8 +580,30 @@ async fn main() -> anyhow::Result<()> {
     .with_streaming(true);
     planner.set_tools(tools.describe_all());
 
+    // ── Create event channel (TUI mode only) ────────────────
+    // Must be created before the scheduler so subagent_runner can capture it.
+    let (event_tx, event_rx) = if cli.tui {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    let subagent_runner = Arc::new(hermess_agent::SubAgentRunnerImpl::new(
+        Arc::clone(&llm) as Arc<dyn llm::LlmAdapter>,
+        Arc::clone(&evolution),
+        Arc::clone(&tools),
+        event_tx.clone(),
+    ));
     let mut scheduler = scheduler::Scheduler::new(Arc::clone(&tools), cfg.max_concurrency)
-        .with_max_retries(cfg.max_step_retries);
+        .with_max_retries(cfg.max_step_retries)
+        .with_subagent_runner(subagent_runner);
+
+    // Wire event sender to planner and scheduler for TUI progress reporting.
+    if let Some(ref tx) = event_tx {
+        planner.set_event_sender(tx.clone());
+        scheduler.set_event_sender(tx.clone());
+    }
 
     let reflector = if cfg.scorer.success_weight != 0.6 || cfg.scorer.latency_weight != 0.2 {
         reflector::Reflector::with_scorer(
@@ -499,16 +621,6 @@ async fn main() -> anyhow::Result<()> {
 
     let usage_tracker = Arc::new(llm::UsageTracker::new(&cfg.llm.model));
     let evolution_handle = Arc::clone(&evolution);
-
-    // ── Create event channel (TUI mode only) ────────────────
-    let (event_tx, event_rx) = if cli.tui {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
-        planner.set_event_sender(tx.clone());
-        scheduler.set_event_sender(tx.clone());
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
 
     // ── Knowledge base preload ─────────────────────────────
     for kb_dir in &cli.knowledge_base {
@@ -578,6 +690,8 @@ async fn main() -> anyhow::Result<()> {
         compress_keep_ratio: cfg.compress_keep_ratio,
         event_tx: event_tx.clone(),
         conversation_history: Vec::new(),
+        recent_insights: Vec::new(),
+        distiller: hermess_agent::SkillDistiller::new(),
         tui_input: tui_input.clone(),
     };
 
@@ -627,9 +741,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(cron = %cron_expr, "定时调度模式启动");
         loop {
             let now = chrono::Utc::now();
-            let wait_secs = schedule.next_in_secs(&now)
-                .unwrap_or(3600)
-                .min(86400); // cap at 24h
+            let wait_secs = schedule.next_in_secs(&now).unwrap_or(3600).min(86400); // cap at 24h
 
             tracing::info!(
                 next_run = %(now + chrono::Duration::seconds(wait_secs)),
@@ -668,11 +780,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        let ctx = if effective_interactive {
-            agent_core::context::Context::interactive().with_stop_flag(Arc::clone(&stop_flag))
-        } else {
-            agent_core::context::Context::new(cli.task).with_stop_flag(Arc::clone(&stop_flag))
-        };
+        let ctx = agent_core::context::Context::interactive_with_task(cli.task.clone())
+            .with_stop_flag(Arc::clone(&stop_flag));
         agent = tui::run_tui(
             agent,
             ctx,
@@ -680,6 +789,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&evolution_handle),
             "Hermes Agent".into(),
             tui_input.unwrap(),
+            Some(Arc::clone(&usage_tracker)),
         )
         .await?;
     } else if cli.task.is_some() || cli.interactive {
@@ -722,29 +832,62 @@ struct RunRequest {
     task: String,
 }
 
-async fn run_server(
-    agent: hermess_agent::SmallHermesAgent,
-    port: u16,
-) -> anyhow::Result<()> {
+async fn run_server(agent: hermess_agent::SmallHermesAgent, port: u16) -> anyhow::Result<()> {
     use std::net::SocketAddr;
+    use tower_http::{
+        cors::CorsLayer,
+        limit::RequestBodyLimitLayer,
+        request_id::{MakeRequestId, RequestId, SetRequestIdLayer},
+    };
+    use uuid::Uuid;
+
+    #[derive(Clone, Default)]
+    struct MakeRequestUuid;
+    impl MakeRequestId for MakeRequestUuid {
+        fn make_request_id<B>(&mut self, _request: &axum::http::Request<B>) -> Option<RequestId> {
+            let id = Uuid::new_v4().to_string().parse().ok()?;
+            Some(RequestId::new(id))
+        }
+    }
 
     let agent_arc = Arc::new(Mutex::new(agent));
 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/agent/run", post(run_agent_handler))
+        .layer((
+            SetRequestIdLayer::x_request_id(MakeRequestUuid),
+            RequestBodyLimitLayer::new(4 * 1024 * 1024),
+            CorsLayer::permissive(),
+        ))
         .with_state(agent_arc);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "HTTP server starting");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!("Shutdown signal received, draining...");
 }
 
 async fn health_handler() -> &'static str {
     "ok"
+}
+
+fn agent_error_json(message: String) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "message": message,
+            "type": "agent_error"
+        }
+    })
 }
 
 async fn run_agent_handler(
@@ -762,41 +905,61 @@ async fn run_agent_handler(
     });
 
     match handle.await {
-        Ok(Ok(())) => {
-            (StatusCode::OK, Json(serde_json::json!({
+        Ok(Ok(())) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
                 "summary": "任务已完成。",
                 "turn": 0,
                 "success": true,
-            }))).into_response()
-        }
-        Ok(Err(e)) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "summary": format!("执行错误: {:#}", e),
-                "turn": 0,
-                "success": false,
-            }))).into_response()
-        }
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "summary": format!("任务异常: {:#}", e),
-                "turn": 0,
-                "success": false,
-            }))).into_response()
-        }
+            })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(agent_error_json(format!("执行错误: {:#}", e))),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(agent_error_json(format!("任务异常: {:#}", e))),
+        )
+            .into_response(),
     }
 }
 
 // ── Gateway ────────────────────────────────────────────────────────
 
 async fn run_gateway(config_path: &str) -> anyhow::Result<()> {
+    use std::net::SocketAddr;
+    use tokio::net::TcpSocket;
+
     let cfg = hermess_gateway::config::GatewayConfig::from_file(config_path)?;
     let listen_addr = cfg.gateway.listen.clone();
-    let gateway = hermess_gateway::gateway::Gateway::new(cfg).await;
+    let gateway = hermess_gateway::gateway::Gateway::new(cfg, "embedded", false).await;
 
-    tracing::info!(addr = %listen_addr, "Hermess Gateway starting");
+    tracing::info!(addr = %listen_addr, instance = "embedded", "Hermess Gateway starting");
+
+    let feedback = std::sync::Arc::clone(&gateway.feedback);
     let app = hermess_gateway::server::build_router(gateway);
-    let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
-    axum::serve(listener, app).await?;
+
+    let parsed: SocketAddr = listen_addr.parse()?;
+    let socket = if parsed.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    socket.set_reuseaddr(true)?;
+    socket.bind(parsed)?;
+    let listener = socket.listen(4096)?;
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    let feedback_file = ".hermes_feedback_embedded.json";
+    if let Err(e) = feedback.save_to_file(feedback_file) {
+        tracing::error!(error = %e, "Failed to save feedback state");
+    }
     Ok(())
 }
 

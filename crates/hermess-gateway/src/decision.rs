@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::classifier::ComplexityClassifier;
 use crate::config::OptimizerConfig;
+use crate::feedback::FeedbackTracker;
 use crate::models::{Classification, RouteMode, RouteTarget, RoutingDecision};
 use crate::registry::ModelRegistry;
 use crate::shg::ShgDetector;
@@ -13,6 +14,7 @@ pub struct DecisionEngine {
     classifier: ComplexityClassifier,
     optimizer_config: OptimizerConfig,
     registry: Arc<ModelRegistry>,
+    feedback: Arc<FeedbackTracker>,
 }
 
 impl DecisionEngine {
@@ -21,8 +23,15 @@ impl DecisionEngine {
         classifier: ComplexityClassifier,
         optimizer_config: OptimizerConfig,
         registry: Arc<ModelRegistry>,
+        feedback: Arc<FeedbackTracker>,
     ) -> Self {
-        Self { shg, classifier, optimizer_config, registry }
+        Self {
+            shg,
+            classifier,
+            optimizer_config,
+            registry,
+            feedback,
+        }
     }
 
     /// Full routing pipeline: SHG → classify → strategy → decision.
@@ -38,9 +47,9 @@ impl DecisionEngine {
         // 2. Classify (<50ms, with timeout fallback)
         let classification = self.classifier.classify(prompt).await;
 
-        // 3. Strategy decision
+        // 3. Strategy decision (now feedback-aware)
         let models = self.registry.all().to_vec();
-        let model = RouteStrategy::decide(mode, &classification, &models)
+        let model = RouteStrategy::decide(mode, &classification, &models, &self.feedback)
             .unwrap_or_else(|| {
                 tracing::warn!("No model matched strategy, using first available");
                 models.first().map(|m| m.name.clone()).unwrap_or_default()
@@ -53,8 +62,12 @@ impl DecisionEngine {
         {
             let small = RouteStrategy::decide(
                 &RouteMode::CostFirst,
-                &Classification { complexity: 0.2, ..Classification::default() },
+                &Classification {
+                    complexity: 0.2,
+                    ..Classification::default()
+                },
                 &models,
+                &self.feedback,
             );
             if let Some(small_model) = small {
                 if small_model != model {
@@ -74,10 +87,7 @@ impl DecisionEngine {
 
         RoutingDecision {
             target: RouteTarget::Single(model),
-            reasoning: format!(
-                "complexity={:.2}, mode={mode}",
-                classification.complexity
-            ),
+            reasoning: format!("complexity={:.2}, mode={mode}", classification.complexity),
         }
     }
 }

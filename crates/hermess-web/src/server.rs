@@ -202,7 +202,11 @@ async fn reload_feishu(
     Json(req): Json<FeishuReloadRequest>,
 ) -> impl IntoResponse {
     if req.app_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "app_id is required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "app_id is required"})),
+        )
+            .into_response();
     }
 
     let new_client = FeishuClient::new(req.app_id.clone(), req.app_secret.clone());
@@ -227,15 +231,21 @@ async fn reload_feishu(
     *bot_handle = Some(handle);
     tracing::info!("new feishu bot spawned");
 
-    (StatusCode::OK, Json(serde_json::json!({"status": "ok", "message": "飞书配置已更新并重连"}))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "ok", "message": "飞书配置已更新并重连"})),
+    )
+        .into_response()
 }
 
-async fn feishu_status(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn feishu_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let client = state.feishu_client.read().await;
-    (StatusCode::OK, Json(serde_json::json!({
-        "app_id": client.app_id(),
-        "connected": state.feishu_bot_handle.read().await.is_some(),
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "app_id": client.app_id(),
+            "connected": state.feishu_bot_handle.read().await.is_some(),
+        })),
+    )
+        .into_response()
 }

@@ -11,7 +11,9 @@ use crate::state::{AgentPhase, TuiAppState};
 use crate::theme;
 
 pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
-    let (phase_str, phase_color) = if state.agent_done {
+    let (phase_str, phase_color) = if state.awaiting_input {
+        ("等待输入 / Enter 提交", theme::CYAN)
+    } else if state.agent_done {
         ("完成 / 按 q 退出", theme::GREEN)
     } else {
         let s = match state.phase {
@@ -48,7 +50,12 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
     let mut spans = vec![left, Span::raw("  "), turn];
 
     // Spinner: only show when agent is actually working
-    if !state.agent_done && state.phase != AgentPhase::Idle {
+    if state.awaiting_input {
+        spans.push(Span::styled(
+            " ▸ ",
+            Style::default().fg(theme::CYAN).bg(theme::BG),
+        ));
+    } else if !state.agent_done && state.phase != AgentPhase::Idle {
         // Phase-aware spinner animation
         let spinner = match state.phase {
             AgentPhase::Planning => {
@@ -56,7 +63,11 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
                 BRAILLE[(state.frame_count as usize) % BRAILLE.len()]
             }
             AgentPhase::Executing => {
-                if state.frame_count % 4 < 2 { '▶' } else { '▷' }
+                if state.frame_count % 4 < 2 {
+                    '▶'
+                } else {
+                    '▷'
+                }
             }
             AgentPhase::Reflecting => {
                 const DOTS: &[char] = &['◌', '◌', '◌'];
@@ -81,7 +92,10 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         phase_str.to_string(),
-        Style::default().fg(phase_color).bg(theme::BG).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(phase_color)
+            .bg(theme::BG)
+            .add_modifier(Modifier::BOLD),
     ));
 
     // Elapsed time (approximate: ~30fps = 1s per 30 frames)
@@ -129,9 +143,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
                 };
                 spans.push(Span::styled(
                     format!(" {} ", cost_str),
-                    Style::default()
-                        .fg(theme::YELLOW)
-                        .bg(theme::BG),
+                    Style::default().fg(theme::YELLOW).bg(theme::BG),
                 ));
             }
             // Token usage bar
@@ -162,7 +174,10 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!(" {} err ", error_count),
-            Style::default().fg(theme::BG).bg(theme::RED).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::RED)
+                .add_modifier(Modifier::BOLD),
         ));
     }
 
@@ -173,11 +188,18 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
         } else {
             format!("Gateway · {} models", state.gateway_models.len())
         };
-        let gw_color = if state.shg_triggered { theme::YELLOW } else { theme::BLUE };
+        let gw_color = if state.shg_triggered {
+            theme::YELLOW
+        } else {
+            theme::BLUE
+        };
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!(" {} ", gw_label),
-            Style::default().fg(theme::BG).bg(gw_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::BG)
+                .bg(gw_color)
+                .add_modifier(Modifier::BOLD),
         ));
         if let Some(ref route) = state.last_route_decision {
             let preview = crate::state::truncate(route, 40);
@@ -190,5 +212,8 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TuiAppState) {
     }
 
     let line = ratatui::text::Line::from(spans);
-    frame.render_widget(Paragraph::new(line).style(Style::default().bg(theme::BG)), area);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(theme::BG)),
+        area,
+    );
 }

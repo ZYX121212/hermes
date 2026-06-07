@@ -82,10 +82,12 @@ impl Tool for WebSearchTool {
         };
 
         // Perform search via Brave Search API
+        let num_results = args["num_results"].as_u64().unwrap_or(5).min(20);
+        let count_str = num_results.to_string();
         let resp = self
             .client
             .get(&self.config.endpoint)
-            .query(&[("q", query), ("count", "5")])
+            .query(&[("q", query), ("count", count_str.as_str())])
             .header("Accept", "application/json")
             .header("X-Subscription-Token", api_key.as_str())
             .send()

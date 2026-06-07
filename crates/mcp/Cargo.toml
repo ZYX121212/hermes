@@ -1,6 +1,8 @@
 [package]
 name = "mcp"
 version = "0.1.0"
+description = "Model Context Protocol stdio server for tool exposure"
+license = "MIT"
 edition = "2021"
 
 [dependencies]

@@ -1,6 +1,8 @@
 [package]
 name = "llm"
 version = "0.1.0"
+description = "LLM adapter layer supporting Anthropic, OpenAI, and DeepSeek providers"
+license = "MIT"
 edition = "2021"
 
 [dependencies]

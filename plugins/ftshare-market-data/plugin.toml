@@ -1,0 +1,30 @@
+name = "ftshare_market_data"
+description = "Call the SkillHub FTShare-market-data skill package for market.ft.tech financial data. Use this for A-share/HK stock quotes, K-line data, IPOs, block trades, margin trading, convertible bonds, ETFs, funds, indices, macro data, and market news. Pass a subskill name and arguments from the FTShare-market-data SKILL.md."
+type = "script"
+interpreter = "python3"
+script = "run.py"
+
+[schema]
+type = "object"
+required = ["subskill"]
+
+[schema.properties.subskill]
+type = "string"
+description = "FTShare subskill name, for example index-ohlcs for index K-line, stock-ohlcs for stock K-line, stock-quotes-list, stock-prices, stock-list-all-stocks, index-list-paginated, hk-view, company-hk, semantic-search-news."
+
+[schema.properties.query]
+type = "string"
+description = "Original user request in natural language. Always pass it when the user used natural language; the wrapper uses it to infer index/stock code, date, K-line span, and repair missing arguments."
+
+[schema.properties.args]
+type = "object"
+description = "Subskill arguments as JSON. Keys are passed as CLI flags exactly as written, prefixed with --. Use keys like order_by or page-size to match each subskill's SKILL.md. Compatibility: date=YYYYMMDD is accepted for K-line tools and converted to until_ts_ms; internal retry keys are ignored. Boolean true becomes a flag, false/null are omitted, arrays repeat the flag."
+
+[schema.properties.argv]
+type = "array"
+description = "Optional raw CLI argument list. Use only when args cannot express the call."
+items = { type = "string" }
+
+[schema.properties.list_subskills]
+type = "boolean"
+description = "When true, list available FTShare subskills instead of executing one."

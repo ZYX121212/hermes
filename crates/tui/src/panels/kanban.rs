@@ -49,8 +49,7 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, state: &TuiAppState) {
 
         if items.is_empty() {
             frame.render_widget(
-                Paragraph::new(theme::empty("(空)"))
-                    .style(Style::default().bg(theme::PANEL)),
+                Paragraph::new(theme::empty("(空)")).style(Style::default().bg(theme::PANEL)),
                 inner,
             );
         } else {

@@ -20,6 +20,20 @@ impl ShgDetector {
         }
     }
 
+    /// Merge additional patterns (e.g. from project skills).
+    /// Skips duplicates case-insensitively.
+    pub fn merge_patterns(&mut self, patterns: &[String]) {
+        for p in patterns {
+            if !self
+                .patterns
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(p))
+            {
+                self.patterns.push(p.clone());
+            }
+        }
+    }
+
     /// Check a prompt. Returns Some(model_name) if SHG triggers,
     /// meaning the request should be routed directly to `force_model`.
     pub fn check(&self, prompt: &str) -> Option<String> {
@@ -104,5 +118,30 @@ mod tests {
         det.force_model = None;
         let result = det.check("分析时间复杂度");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn merge_patterns_adds_new() {
+        let mut det = shg();
+        det.merge_patterns(&["concurrency".into()]);
+        assert!(det.check("concurrency").is_some());
+    }
+
+    #[test]
+    fn merge_patterns_skips_duplicates() {
+        let mut det = shg();
+        det.merge_patterns(&["时间复杂度".into()]); // already in patterns
+        assert_eq!(
+            det.patterns.iter().filter(|p| *p == "时间复杂度").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn merge_patterns_empty_is_noop() {
+        let mut det = shg();
+        let before = det.patterns.len();
+        det.merge_patterns(&[]);
+        assert_eq!(det.patterns.len(), before);
     }
 }

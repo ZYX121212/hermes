@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::Stream;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 
 use crate::usage::TokenUsage;
 
@@ -13,6 +14,34 @@ pub struct RouteInfo {
     pub routed_model: String,
     pub shg_triggered: bool,
     pub reason: String,
+}
+
+/// A single chat message with role and content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Structured chat completion request with full parameter support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCompletionRequest {
+    pub messages: Vec<ChatMessage>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub stream: bool,
+}
+
+impl ChatCompletionRequest {
+    /// Flatten messages into a single prompt string for legacy adapters.
+    pub fn flatten(&self) -> String {
+        self.messages
+            .iter()
+            .map(|m| format!("[{}]: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// 统一的 LLM 适配器 trait。
@@ -27,6 +56,21 @@ pub trait LlmAdapter: Send + Sync {
         &self,
         prompt: String,
     ) -> anyhow::Result<Box<dyn Stream<Item = anyhow::Result<String>> + Unpin + Send>>;
+
+    /// 非流式 structured chat completion：透传完整消息结构和参数。
+    /// Default implementation falls back to `complete()` with flattened prompt.
+    async fn complete_chat(&self, req: ChatCompletionRequest) -> anyhow::Result<String> {
+        self.complete(req.flatten()).await
+    }
+
+    /// 流式 structured chat completion：透传完整消息结构和参数。
+    /// Default implementation falls back to `complete_stream()` with flattened prompt.
+    async fn complete_stream_chat(
+        &self,
+        req: ChatCompletionRequest,
+    ) -> anyhow::Result<Box<dyn Stream<Item = anyhow::Result<String>> + Unpin + Send>> {
+        self.complete_stream(req.flatten()).await
+    }
 
     /// 将文本嵌入为浮点向量。
     async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>>;

@@ -53,7 +53,11 @@ pub fn render_slash_result(frame: &mut Frame, area: Rect, result: &SlashResult) 
     frame.render_widget(para, popup);
 
     if content_height > viewport_h as usize {
-        let bar = render_scrollbar(clamp_scroll(result.scroll, content_height, viewport_h), content_height, viewport_h);
+        let bar = render_scrollbar(
+            clamp_scroll(result.scroll, content_height, viewport_h),
+            content_height,
+            viewport_h,
+        );
         let bar_lines: Vec<Line> = bar
             .chars()
             .map(|ch| {
