@@ -227,7 +227,7 @@ impl Default for LlmConfig {
             provider: "deepseek".into(),
             model: "deepseek-chat".into(),
             max_tokens: 4096,
-            api_key: "sk-4ab52089feed4d788eee376dfaa4bbb3".into(),
+            api_key: String::new(),
             base_url: "https://api.deepseek.com/v1".into(),
         }
     }
@@ -1185,11 +1185,11 @@ async fn main() -> anyhow::Result<()> {
                     .or_else(|_| std::env::var("DEEPSEEK_API_KEY"))
                     .unwrap_or_default();
                 if k.is_empty() {
-                    // Fall back to hardcoded DeepSeek default so the agent
-                    // works out of the box even without any configuration.
-                    let default_key = "sk-4ab52089feed4d788eee376dfaa4bbb3";
-                    tracing::info!("Using default DeepSeek API key");
-                    default_key.to_string()
+                    tracing::warn!(
+                        "未配置 LLM API Key！请设置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY 环境变量，\
+                         或运行 hermes configure 进行配置"
+                    );
+                    String::new()
                 } else {
                     k
                 }

@@ -55,7 +55,7 @@ impl Default for UserSettings {
             llm_provider: "deepseek".into(),
             llm_model: "deepseek-chat".into(),
             llm_base_url: "https://api.deepseek.com/v1".into(),
-            llm_api_key: "sk-4ab52089feed4d788eee376dfaa4bbb3".into(),
+            llm_api_key: String::new(),
             search_enabled: false,
             search_api_key: String::new(),
             finance_provider: "ftshare".into(),
@@ -310,7 +310,7 @@ mod tests {
         let s = UserSettings::default();
         assert_eq!(s.llm_provider, "deepseek");
         assert_eq!(s.llm_model, "deepseek-chat");
-        assert!(!s.llm_api_key.is_empty()); // default api key set
+        assert!(s.llm_api_key.is_empty()); // 默认无 key，需用户配置
         assert!(!s.search_enabled);
         assert_eq!(s.finance_provider, "ftshare");
     }
@@ -415,7 +415,7 @@ mod tests {
         s.fill_defaults();
         assert_eq!(s.llm_provider, "deepseek");
         assert_eq!(s.llm_model, "deepseek-chat");
-        assert_eq!(s.llm_api_key, "sk-4ab52089feed4d788eee376dfaa4bbb3");
+        assert_eq!(s.llm_api_key, ""); // 默认无 key
         assert_eq!(s.llm_base_url, "https://api.deepseek.com/v1");
         assert_eq!(s.finance_provider, "ftshare");
         assert!(s.search_enabled); // explicit true preserved

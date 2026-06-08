@@ -51,9 +51,12 @@ crossterm      = "0.28"
 name = "hermes"
 version = "0.1.0"
 edition = "2021"
-description = "Self-evolving LLM agent framework with gateway routing, tools, memory, and TUI"
+description = "Self-evolving LLM agent framework with gateway routing, multi-platform messaging, tools, memory, and TUI"
 license = "MIT"
-repository = "https://github.com/nova/hermess"
+repository = "https://github.com/ZYX121212/hermes"
+documentation = "https://github.com/ZYX121212/hermes#readme"
+keywords = ["llm", "agent", "ai", "cli", "tui", "automation", "chatbot", "gateway"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "hermes"

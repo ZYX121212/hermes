@@ -17,7 +17,15 @@ Thumbs.db
 
 # Config files with secrets (use .example templates)
 config/*.toml
+!config/profiles/
+!config/*.example
 config.json
+
+# Runtime settings
+.hermess/
+
+# Output files
+hermess_results*.txt
 
 # Environment
 .env
