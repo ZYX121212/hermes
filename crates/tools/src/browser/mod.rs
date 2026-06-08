@@ -15,9 +15,15 @@ struct BrowserState {
 
 impl BrowserState {
     fn launch() -> anyhow::Result<Self> {
+        let sandbox_enabled = std::env::var("HERMESS_BROWSER_SANDBOX")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        if !sandbox_enabled {
+            tracing::warn!("浏览器沙箱已禁用（HERMESS_BROWSER_SANDBOX=false），仅在 Docker 环境使用");
+        }
         let opts = LaunchOptions::default_builder()
             .headless(true)
-            .sandbox(false) // Docker 环境兼容
+            .sandbox(sandbox_enabled)
             .window_size(Some((1920, 1080)))
             .build()?;
 
@@ -88,7 +94,7 @@ impl BrowserNavigateTool {
     }
 
     fn ensure_browser(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Option<BrowserState>>> {
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             *guard = Some(BrowserState::launch()?);
         }
@@ -161,7 +167,7 @@ impl Tool for BrowserScreenshotTool {
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let path = args["path"].as_str().unwrap_or("screenshot.png");
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_screenshot: browser not launched. Use browser_navigate first."))?;
 
@@ -208,7 +214,7 @@ impl Tool for BrowserClickTool {
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let selector = args["selector"].as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_click: 'selector' is required"))?;
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_click: browser not launched."))?;
         state.click(selector)?;
@@ -253,7 +259,7 @@ impl Tool for BrowserFillTool {
             .ok_or_else(|| anyhow::anyhow!("browser_fill: 'selector' is required"))?;
         let value = args["value"].as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_fill: 'value' is required"))?;
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_fill: browser not launched."))?;
         state.fill(selector, value)?;
@@ -295,7 +301,7 @@ impl Tool for BrowserExecuteTool {
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let code = args["code"].as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_execute: 'code' is required"))?;
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_execute: browser not launched."))?;
         let result = state.execute_js(code)?;

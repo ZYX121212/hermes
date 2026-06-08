@@ -98,14 +98,14 @@ impl Context {
         std::io::stdin().read_line(&mut input).ok();
         let trimmed = input.trim().to_string();
         if !trimmed.is_empty() {
-            *self.interactive_task.lock().unwrap() = trimmed.clone();
+            *self.interactive_task.lock().unwrap_or_else(|e| e.into_inner()) = trimmed.clone();
         }
         trimmed
     }
 
     /// Take a seeded interactive task, if one exists.
     pub fn take_seeded_interactive_task(&self) -> Option<String> {
-        let mut task = self.interactive_task.lock().unwrap();
+        let mut task = self.interactive_task.lock().unwrap_or_else(|e| e.into_inner());
         if task.is_empty() {
             None
         } else {

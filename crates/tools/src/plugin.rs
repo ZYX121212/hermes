@@ -40,13 +40,13 @@ impl ShellPlugin {
         if let Some(obj) = args.as_object() {
             for (key, val) in obj {
                 let placeholder = format!("$ARG.{}", key);
-                let val_str = match val {
-                    serde_json::Value::String(s) => {
-                        // Simple shell quoting: wrap in single quotes, escape any internal quotes
-                        let escaped = s.replace('\'', "'\\''");
-                        format!("'{}'", escaped)
-                    }
-                    other => other.to_string(),
+                let val_str = {
+                    let s = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    let escaped = s.replace('\'', "'\\''");
+                    format!("'{}'", escaped)
                 };
                 cmd = cmd.replace(&placeholder, &val_str);
             }
@@ -126,6 +126,11 @@ impl Tool for ScriptPlugin {
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let interpreter = self.manifest.interpreter.as_deref().unwrap_or("sh");
+        if !matches!(interpreter, "sh" | "bash" | "python3" | "python" | "node" | "ruby" | "perl") {
+            return Ok(ToolOutput::error(format!(
+                "不支持的脚本解释器: {interpreter}。允许: sh, bash, python3, python, node, ruby, perl"
+            )));
+        }
         let script_path = self
             .script_dir
             .join(self.manifest.script.as_deref().unwrap_or("run.sh"));

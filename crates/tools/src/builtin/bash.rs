@@ -27,7 +27,9 @@ impl BashTool {
 
 impl Default for BashTool {
     fn default() -> Self {
-        Self::unguarded()
+        Self {
+            guard: Arc::new(DangerGuard::new(ConfirmationPolicy::Deny, vec![])),
+        }
     }
 }
 

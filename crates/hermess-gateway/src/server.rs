@@ -415,15 +415,18 @@ async fn chat_completions_handler(
             .into_response();
             resp.headers_mut().insert(
                 "x-hermess-routed-model",
-                axum::http::HeaderValue::from_str(&routed_model).unwrap(),
+                axum::http::HeaderValue::from_str(&routed_model)
+                    .unwrap_or(axum::http::HeaderValue::from_static("unknown")),
             );
             resp.headers_mut().insert(
                 "x-hermess-route-reason",
-                axum::http::HeaderValue::from_str(&reasoning).unwrap(),
+                axum::http::HeaderValue::from_str(&reasoning)
+                    .unwrap_or(axum::http::HeaderValue::from_static("unknown")),
             );
             resp.headers_mut().insert(
                 "x-hermess-shg-triggered",
-                axum::http::HeaderValue::from_str(&shg_triggered.to_string()).unwrap(),
+                axum::http::HeaderValue::from_str(&shg_triggered.to_string())
+                    .unwrap_or(axum::http::HeaderValue::from_static("false")),
             );
             resp
         }
