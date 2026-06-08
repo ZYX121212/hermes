@@ -188,12 +188,17 @@ impl WechatAdapter {
 
         // 支持 markdown 的消息类型检测
         if buttons.is_none() && (text.contains("**") || text.contains('#') || text.contains('`')) {
+            let md_content = if reply_to.is_some() {
+                format!("> 回复消息\n\n{text}")
+            } else {
+                text.to_string()
+            };
             body = serde_json::json!({
                 "touser": touser,
                 "msgtype": "markdown",
                 "agentid": self.config.agent_id,
                 "markdown": {
-                    "content": text,
+                    "content": md_content,
                 }
             });
         }
@@ -223,6 +228,16 @@ impl WechatAdapter {
     /// 企业微信回调支持 JSON 格式（设置回调 URL 时选择 JSON 模式）。
     /// 事件格式参考: https://developer.work.weixin.qq.com/document/path/90240
     pub fn convert_event(&self, event: &Value) -> Option<InboundMessage> {
+        /// 企业微信 API 中 MsgId/CreateTime 为整数，其他字段为字符串。
+        /// 此 helper 统一处理两种类型。
+        fn val_str(v: &Value) -> Option<String> {
+            match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            }
+        }
+
         let msg_type = event.get("MsgType")?.as_str()?;
 
         match msg_type {
@@ -234,7 +249,7 @@ impl WechatAdapter {
                     .and_then(|v| v.as_str())?;
                 let content = event.get("Content").and_then(|v| v.as_str()).unwrap_or("");
                 Some(InboundMessage {
-                    message_id: event.get("MsgId")?.as_str()?.to_string(),
+                    message_id: val_str(event.get("MsgId")?)?,
                     user_id: from_user.to_string(),
                     chat_id: chat_id.to_string(),
                     text: content.to_string(),
@@ -251,7 +266,7 @@ impl WechatAdapter {
                     .and_then(|v| v.as_str())?;
                 let pic_url = event.get("PicUrl").and_then(|v| v.as_str()).unwrap_or("");
                 Some(InboundMessage {
-                    message_id: event.get("MsgId")?.as_str()?.to_string(),
+                    message_id: val_str(event.get("MsgId")?)?,
                     user_id: from_user.to_string(),
                     chat_id: chat_id.to_string(),
                     text: String::new(),
@@ -274,7 +289,7 @@ impl WechatAdapter {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Some(InboundMessage {
-                    message_id: event.get("MsgId")?.as_str()?.to_string(),
+                    message_id: val_str(event.get("MsgId")?)?,
                     user_id: from_user.to_string(),
                     chat_id: chat_id.to_string(),
                     text: recognition.clone().unwrap_or_default(),
@@ -298,7 +313,7 @@ impl WechatAdapter {
                         Some(InboundMessage {
                             message_id: format!(
                                 "{}_{event_type}",
-                                event.get("CreateTime")?.as_str()?
+                                val_str(event.get("CreateTime")?)?
                             ),
                             user_id: from_user.to_string(),
                             chat_id: from_user.to_string(),
@@ -315,7 +330,7 @@ impl WechatAdapter {
                         Some(InboundMessage {
                             message_id: format!(
                                 "{}_{event_type}",
-                                event.get("CreateTime")?.as_str()?
+                                val_str(event.get("CreateTime")?)?
                             ),
                             user_id: from_user.to_string(),
                             chat_id: from_user.to_string(),
@@ -355,7 +370,7 @@ impl WechatAdapter {
                         Some(InboundMessage {
                             message_id: format!(
                                 "tmpl_{}",
-                                event.get("CreateTime")?.as_str()?
+                                val_str(event.get("CreateTime")?)?
                             ),
                             user_id: from_user.to_string(),
                             chat_id: chat_id.to_string(),
@@ -445,6 +460,25 @@ mod tests {
         assert_eq!(msg.text, "你好 企业微信");
         assert_eq!(msg.platform, "wechat");
         assert_eq!(msg.kind, MessageKind::Text);
+    }
+
+    #[test]
+    fn test_convert_text_message_with_integer_msgid() {
+        // 真实企业微信 API 中 MsgId 和 CreateTime 均为整数
+        let adapter = WechatAdapter::new(WechatConfig::default());
+        let event = serde_json::json!({
+            "ToUserName": "wx_hermess",
+            "FromUserName": "user_lisi",
+            "CreateTime": 1717200000,
+            "MsgType": "text",
+            "Content": "整数 MsgId 测试",
+            "MsgId": 1234567890,
+            "AgentID": 1000002
+        });
+        let msg = adapter.convert_event(&event).unwrap();
+        assert_eq!(msg.user_id, "user_lisi");
+        assert_eq!(msg.message_id, "1234567890");
+        assert_eq!(msg.text, "整数 MsgId 测试");
     }
 
     #[test]

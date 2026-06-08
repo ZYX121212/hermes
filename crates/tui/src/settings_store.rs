@@ -202,7 +202,7 @@ agent_id = "{}"
             }
         }
         if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-            if !v.is_empty() && !v.is_empty() && self.llm_api_key.is_empty() {
+            if !v.is_empty() && self.llm_api_key.is_empty() {
                 self.llm_api_key = v;
                 if self.llm_provider.is_empty() {
                     self.llm_provider = "openai".into();

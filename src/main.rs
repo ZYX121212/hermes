@@ -618,6 +618,8 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
 
             let current_url = if existing.llm_provider != provider
                 || existing.llm_base_url.is_empty()
+                || !(existing.llm_base_url.starts_with("http://")
+                    || existing.llm_base_url.starts_with("https://"))
             {
                 default_url.to_string()
             } else {
