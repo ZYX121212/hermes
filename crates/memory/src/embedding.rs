@@ -83,6 +83,66 @@ impl Embedder for VoyageEmbedder {
     }
 }
 
+/// OpenAI-compatible embedding API.
+pub struct OpenAIEmbedder {
+    dimension: usize,
+    api_key: Option<String>,
+    api_base: String,
+    model: String,
+    client: reqwest::Client,
+}
+
+impl OpenAIEmbedder {
+    pub fn new(dimension: usize) -> Self {
+        Self {
+            dimension,
+            api_key: std::env::var("OPENAI_API_KEY").ok(),
+            api_base: std::env::var("OPENAI_API_BASE")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".into()),
+            model: "text-embedding-3-small".into(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Embedder for OpenAIEmbedder {
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let Some(ref api_key) = self.api_key else {
+            tracing::warn!("OpenAIEmbedder: no OPENAI_API_KEY set, returning zero vector");
+            return Ok(vec![0.0_f32; self.dimension]);
+        };
+
+        let resp = self
+            .client
+            .post(format!("{}/embeddings", self.api_base))
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "model": self.model,
+                "input": text
+            }))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            tracing::warn!(status = %resp.status(), "OpenAI embedding failed, falling back to zero");
+            return Ok(vec![0.0_f32; self.dimension]);
+        }
+
+        let body: serde_json::Value = resp.json().await?;
+        let embedding: Vec<f32> = body["data"][0]["embedding"]
+            .as_array()
+            .map(|arr| arr.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
+            .unwrap_or_default();
+        Ok(embedding)
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
 /// Simple hash-based embedder for testing without API calls.
 pub struct HashEmbedder {
     dimension: usize,

@@ -1,32 +1,5 @@
 # Hermes Web Daemon — 飞书配置
-learning_rate = 0.1
-working_memory_size = 100
-max_concurrency = 10
-
 [feishu]
-app_id = "cli_..."              # ← 待填写：飞书应用 App ID
-app_secret = "..."              # ← 待填写：飞书应用 App Secret
-
-[server]
-host = "0.0.0.0"
-port = 8080
-
-[llm]
-provider = "deepseek"
-model = "deepseek-chat"
-max_tokens = 4096
-api_key = "${DEEPSEEK_API_KEY}"
-
-[qdrant]
-url = "http://localhost:6334"
-collection = "hermes_memory"
-embedding_dim = 1024
-
-[search]
-endpoint = "https://api.search.brave.com/res/v1/web/search"
-
-[scorer]
-success_weight = 0.6
-latency_weight = 0.2
-quality_weight = 0.2
-latency_target_ms = 2000
+app_id = "c"
+app_secret = "c"
+bot_open_id = "c"

@@ -23,6 +23,12 @@ chrono.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 futures.workspace = true
+regex = "1"
+once_cell = "1"
+aes-gcm = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.8"
 tokio = { workspace = true, features = ["sync", "time", "macros"] }
 
 [features]

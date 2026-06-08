@@ -28,11 +28,25 @@ pub struct UserSettings {
     #[serde(default)]
     pub finance_tushare_token: String,
 
+    // ── LiteLLM 模型目录 ──
+    #[serde(default)]
+    pub litellm_url: String,
+
     // ── Feishu ──
     #[serde(default)]
     pub feishu_app_id: String,
     #[serde(default)]
     pub feishu_app_secret: String,
+    #[serde(default)]
+    pub feishu_bot_open_id: String,
+
+    // ── WeChat Work ──
+    #[serde(default)]
+    pub wechat_corp_id: String,
+    #[serde(default)]
+    pub wechat_corp_secret: String,
+    #[serde(default)]
+    pub wechat_agent_id: String,
 }
 
 impl Default for UserSettings {
@@ -46,8 +60,13 @@ impl Default for UserSettings {
             search_api_key: String::new(),
             finance_provider: "ftshare".into(),
             finance_tushare_token: String::new(),
+            litellm_url: String::new(),
             feishu_app_id: String::new(),
             feishu_app_secret: String::new(),
+            feishu_bot_open_id: String::new(),
+            wechat_corp_id: String::new(),
+            wechat_corp_secret: String::new(),
+            wechat_agent_id: String::new(),
         }
     }
 }
@@ -106,8 +125,9 @@ impl UserSettings {
 [feishu]
 app_id = "{}"
 app_secret = "{}"
+bot_open_id = "{}"
 "#,
-                self.feishu_app_id, self.feishu_app_secret
+                self.feishu_app_id, self.feishu_app_secret, self.feishu_bot_open_id
             );
             if let Some(parent) = feishu_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -116,6 +136,28 @@ app_secret = "{}"
                 tracing::warn!(error = %e, "Failed to sync feishu config to config/feishu.toml");
             } else {
                 tracing::info!("Synced feishu config to config/feishu.toml");
+            }
+        }
+
+        // 同步企业微信配置到 config/wechat.toml
+        if !self.wechat_corp_id.is_empty() {
+            let wechat_path = std::path::Path::new("config/wechat.toml");
+            let wechat_content = format!(
+                r#"# Hermes Web Daemon — 企业微信配置
+[wechat]
+corp_id = "{}"
+secret = "{}"
+agent_id = "{}"
+"#,
+                self.wechat_corp_id, self.wechat_corp_secret, self.wechat_agent_id
+            );
+            if let Some(parent) = wechat_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(wechat_path, &wechat_content) {
+                tracing::warn!(error = %e, "Failed to sync wechat config to config/wechat.toml");
+            } else {
+                tracing::info!("Synced wechat config to config/wechat.toml");
             }
         }
 
@@ -199,6 +241,31 @@ app_secret = "{}"
                 self.feishu_app_secret = v;
             }
         }
+        if let Ok(v) = std::env::var("FEISHU_BOT_OPEN_ID") {
+            if !v.is_empty() {
+                self.feishu_bot_open_id = v;
+            }
+        }
+        if let Ok(v) = std::env::var("WECHAT_CORP_ID") {
+            if !v.is_empty() {
+                self.wechat_corp_id = v;
+            }
+        }
+        if let Ok(v) = std::env::var("WECHAT_CORP_SECRET") {
+            if !v.is_empty() {
+                self.wechat_corp_secret = v;
+            }
+        }
+        if let Ok(v) = std::env::var("WECHAT_AGENT_ID") {
+            if !v.is_empty() {
+                self.wechat_agent_id = v;
+            }
+        }
+        if let Ok(v) = std::env::var("LITELLM_URL") {
+            if !v.is_empty() {
+                self.litellm_url = v;
+            }
+        }
     }
 
     /// Mask an API key for display: "sk-abc1234xyz" → "sk-abc••••xyz"
@@ -259,8 +326,13 @@ mod tests {
             search_api_key: "BSA-test".into(),
             finance_provider: "sina".into(),
             finance_tushare_token: String::new(),
-            feishu_app_id: String::new(),
-            feishu_app_secret: String::new(),
+            feishu_app_id: "cli_test".into(),
+            feishu_app_secret: "secret_test".into(),
+            feishu_bot_open_id: "bot_ou_001".into(),
+            litellm_url: "http://localhost:4000".into(),
+            wechat_corp_id: "ww_test".into(),
+            wechat_corp_secret: "secret_wx".into(),
+            wechat_agent_id: "1000002".into(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let s2: UserSettings = serde_json::from_str(&json).unwrap();
@@ -268,6 +340,10 @@ mod tests {
         assert_eq!(s2.llm_model, "deepseek-chat");
         assert!(s2.search_enabled);
         assert_eq!(s2.finance_provider, "sina");
+        assert_eq!(s2.feishu_app_id, "cli_test");
+        assert_eq!(s2.feishu_bot_open_id, "bot_ou_001");
+        assert_eq!(s2.wechat_corp_id, "ww_test");
+        assert_eq!(s2.wechat_agent_id, "1000002");
     }
 
     #[test]

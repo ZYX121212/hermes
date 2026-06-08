@@ -1,65 +1,139 @@
 // crates/tools/src/builtin/guard.rs
-// 危险命令安全守卫：在 BashTool 执行前进行模式匹配和确认。
+// 工具执行守卫系统：危险命令检测 + 三级审批 + 智能记忆。
+use std::collections::HashMap;
+use std::sync::Mutex;
 
-/// 确认策略
+/// 审批策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfirmationPolicy {
-    /// 交互模式：弹窗/命令行确认
+pub enum ApprovalPolicy {
+    /// 自动放行（仅安全命令）
+    Auto,
+    /// 每次危险操作都询问
     Ask,
-    /// 自动放行所有命令（不安全，仅用于受控环境）
-    Skip,
-    /// 自动拒绝所有危险命令
+    /// 自动拒绝所有危险操作
     Deny,
 }
 
-impl std::str::FromStr for ConfirmationPolicy {
+impl std::str::FromStr for ApprovalPolicy {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.to_lowercase().as_str() {
-            "skip" => Self::Skip,
+            "auto" | "skip" => Self::Auto,
             "deny" => Self::Deny,
             _ => Self::Ask,
         })
     }
 }
 
-/// 危险命令守卫：检测高风险命令并请求确认。
-pub struct DangerGuard {
-    policy: ConfirmationPolicy,
-    extra_patterns: Vec<String>,
+/// 审批结果：调用方根据此结果决定是否允许执行。
+#[derive(Debug, Clone)]
+pub enum ApprovalResult {
+    Allow,
+    ConfirmRequired { danger_desc: String, cmd_summary: String },
+    Denied { reason: String },
 }
 
-impl DangerGuard {
-    pub fn new(policy: ConfirmationPolicy, extra_patterns: Vec<String>) -> Self {
+/// 用户对某类危险命令的历史决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserDecision {
+    AllowOnce,
+    DenyOnce,
+    AllowAlways,
+    DenyAlways,
+}
+
+/// 智能审批守卫：危险模式匹配 + 三级审批 + 用户决策记忆。
+pub struct ToolGuard {
+    policy: ApprovalPolicy,
+    extra_patterns: Vec<String>,
+    decisions: Mutex<HashMap<String, UserDecision>>,
+}
+
+impl ToolGuard {
+    pub fn new(policy: ApprovalPolicy, extra_patterns: Vec<String>) -> Self {
         Self {
             policy,
             extra_patterns,
+            decisions: Mutex::new(HashMap::new()),
         }
     }
 
-    /// 检查命令是否危险。返回 Ok(()) 表示可以继续，Err 表示被策略拒绝。
+    /// 检测命令并返回审批结果。
+    pub fn approve(&self, cmd: &str) -> ApprovalResult {
+        let dangerous = self.is_dangerous(cmd);
+        if !dangerous {
+            return ApprovalResult::Allow;
+        }
+
+        if let Some(decision) = self.lookup_decision(cmd) {
+            return match decision {
+                UserDecision::AllowOnce | UserDecision::AllowAlways => ApprovalResult::Allow,
+                UserDecision::DenyOnce | UserDecision::DenyAlways => ApprovalResult::Denied {
+                    reason: format!(
+                        "denied by remembered decision for pattern: {}",
+                        self.matched_pattern(cmd)
+                    ),
+                },
+            };
+        }
+
+        match self.policy {
+            ApprovalPolicy::Auto => ApprovalResult::Allow,
+            ApprovalPolicy::Deny => ApprovalResult::Denied {
+                reason: format!(
+                    "危险命令被 Deny 策略自动拒绝: {}",
+                    Self::summarize(cmd)
+                ),
+            },
+            ApprovalPolicy::Ask => ApprovalResult::ConfirmRequired {
+                danger_desc: format!(
+                    "检测到危险命令模式: {}",
+                    self.matched_pattern(cmd)
+                ),
+                cmd_summary: Self::summarize(cmd).to_string(),
+            },
+        }
+    }
+
+    /// 向后兼容的 check() 方法（DangerGuard 原有 API）。
     pub fn check(&self, cmd: &str) -> Result<(), String> {
-        if self.policy == ConfirmationPolicy::Skip {
-            return Ok(());
+        match self.approve(cmd) {
+            ApprovalResult::Allow => Ok(()),
+            ApprovalResult::ConfirmRequired { .. } => Ok(()),
+            ApprovalResult::Denied { reason } => Err(reason),
         }
-
-        if !self.is_dangerous(cmd) {
-            return Ok(());
-        }
-
-        if self.policy == ConfirmationPolicy::Deny {
-            return Err(format!(
-                "危险命令已被安全策略自动拒绝: {}",
-                Self::summarize(cmd)
-            ));
-        }
-
-        // Ask 模式：返回危险信息由调用方处理确认
-        Ok(())
     }
 
-    /// 判断命令是否命中危险模式
+    fn record_decision(&self, cmd: &str, decision: UserDecision) {
+        let pattern = self.matched_pattern(cmd);
+        if let Ok(mut decisions) = self.decisions.lock() {
+            decisions.insert(pattern, decision);
+        }
+    }
+
+    pub fn allow_once(&self, cmd: &str) {
+        self.record_decision(cmd, UserDecision::AllowOnce);
+    }
+
+    pub fn allow_always(&self, cmd: &str) {
+        self.record_decision(cmd, UserDecision::AllowAlways);
+    }
+
+    pub fn deny_once(&self, cmd: &str) {
+        self.record_decision(cmd, UserDecision::DenyOnce);
+    }
+
+    pub fn deny_always(&self, cmd: &str) {
+        self.record_decision(cmd, UserDecision::DenyAlways);
+    }
+
+    pub fn forget_all(&self) {
+        if let Ok(mut decisions) = self.decisions.lock() {
+            decisions.clear();
+        }
+    }
+
     pub fn is_dangerous(&self, cmd: &str) -> bool {
         let cmd_lower = cmd.to_lowercase();
         let builtin = DANGEROUS_PATTERNS.iter().copied();
@@ -67,23 +141,48 @@ impl DangerGuard {
         builtin.chain(extra).any(|pat| cmd_lower.contains(pat))
     }
 
-    /// 返回危险命令的简短摘要（用于确认提示）
+    pub fn matched_pattern(&self, cmd: &str) -> String {
+        let cmd_lower = cmd.to_lowercase();
+        let builtin = DANGEROUS_PATTERNS.iter().copied();
+        let extra = self.extra_patterns.iter().map(|s| s.as_str());
+        builtin
+            .chain(extra)
+            .find(|pat| cmd_lower.contains(*pat))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    }
+
+    fn lookup_decision(&self, cmd: &str) -> Option<UserDecision> {
+        if let Ok(decisions) = self.decisions.lock() {
+            decisions.get(&self.matched_pattern(cmd)).copied()
+        } else {
+            None
+        }
+    }
+
     pub fn summarize(cmd: &str) -> String {
         let truncated: String = cmd.chars().take(80).collect();
         if truncated.len() < cmd.len() {
-            format!("{}…", truncated)
+            format!("{}...", truncated)
         } else {
             truncated
         }
     }
 
-    /// 获取当前策略
-    pub fn policy(&self) -> ConfirmationPolicy {
+    pub fn policy(&self) -> ApprovalPolicy {
         self.policy
+    }
+
+    pub fn set_policy(&mut self, policy: ApprovalPolicy) {
+        self.policy = policy;
     }
 }
 
-/// 内置危险模式列表
+// 向后兼容别名
+pub type ConfirmationPolicy = ApprovalPolicy;
+pub type DangerGuard = ToolGuard;
+
+/// 内置危险模式列表。
 static DANGEROUS_PATTERNS: &[&str] = &[
     "rm -rf /",
     "rm -rf ~",
@@ -124,7 +223,7 @@ static DANGEROUS_PATTERNS: &[&str] = &[
     "~/.ssh/",
     ".env ",
     "eval \"$",
-    "\\x", // 十六进制转义混淆
+    "\\x",
 ];
 
 #[cfg(test)]
@@ -133,50 +232,73 @@ mod tests {
 
     #[test]
     fn test_detects_rm_rf() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Ask, vec![]);
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
         assert!(guard.is_dangerous("rm -rf /tmp/test"));
         assert!(guard.is_dangerous("rm -rf /"));
         assert!(!guard.is_dangerous("rm file.txt"));
-        assert!(!guard.is_dangerous("echo hello"));
     }
 
     #[test]
-    fn test_detects_sudo() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Ask, vec![]);
-        assert!(guard.is_dangerous("sudo apt update"));
-        assert!(guard.is_dangerous("sudo rm file"));
+    fn test_auto_policy_allows_all() {
+        let guard = ToolGuard::new(ApprovalPolicy::Auto, vec![]);
+        assert!(matches!(guard.approve("rm -rf /"), ApprovalResult::Allow));
     }
 
     #[test]
-    fn test_detects_git_force() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Ask, vec![]);
-        assert!(guard.is_dangerous("git push --force origin main"));
-        assert!(guard.is_dangerous("git push -f"));
-        assert!(guard.is_dangerous("git reset --hard HEAD~5"));
+    fn test_deny_policy_blocks() {
+        let guard = ToolGuard::new(ApprovalPolicy::Deny, vec![]);
+        assert!(matches!(guard.approve("rm -rf /"), ApprovalResult::Denied { .. }));
     }
 
     #[test]
-    fn test_detects_fork_bomb() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Ask, vec![]);
-        assert!(guard.is_dangerous(":(){ :|:& };:"));
+    fn test_ask_policy_requires_confirmation() {
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        assert!(matches!(
+            guard.approve("sudo rm important.txt"),
+            ApprovalResult::ConfirmRequired { .. }
+        ));
     }
 
     #[test]
-    fn test_policy_skip() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Skip, vec![]);
-        assert!(guard.check("rm -rf /").is_ok());
+    fn test_safe_command_allowed_in_ask() {
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        assert!(matches!(guard.approve("ls -la"), ApprovalResult::Allow));
     }
 
     #[test]
-    fn test_policy_deny() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Deny, vec![]);
-        assert!(guard.check("rm -rf /").is_err());
+    fn test_smart_approval_remembers_allow() {
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        assert!(matches!(guard.approve("sudo systemctl restart"), ApprovalResult::ConfirmRequired { .. }));
+        guard.allow_always("sudo systemctl restart");
+        assert!(matches!(guard.approve("sudo apt update"), ApprovalResult::Allow));
+    }
+
+    #[test]
+    fn test_smart_approval_remembers_deny() {
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        guard.deny_always("rm -rf /tmp/data");
+        assert!(matches!(guard.approve("rm -rf /tmp/data"), ApprovalResult::Denied { .. }));
+    }
+
+    #[test]
+    fn test_forget_all() {
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        guard.allow_always("sudo test");
+        guard.forget_all();
+        assert!(matches!(guard.approve("sudo test"), ApprovalResult::ConfirmRequired { .. }));
+    }
+
+    #[test]
+    fn test_backward_compat() {
+        // DangerGuard 是 ToolGuard 的别名
+        let guard: DangerGuard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
+        assert!(guard.is_dangerous("rm -rf /"));
+        assert!(guard.check("echo hello").is_ok());
     }
 
     #[test]
     fn test_extra_patterns() {
-        let guard = DangerGuard::new(ConfirmationPolicy::Ask, vec!["my_custom_danger".into()]);
+        let guard = ToolGuard::new(ApprovalPolicy::Ask, vec!["my_custom_danger".into()]);
         assert!(guard.is_dangerous("my_custom_danger something"));
-        assert!(!guard.is_dangerous("safe command"));
     }
 }

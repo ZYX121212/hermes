@@ -141,7 +141,11 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
 }
 
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(state.gateway.metrics.snapshot())
+    let snapshot = state.gateway.metrics.snapshot();
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        snapshot.to_prometheus(),
+    )
 }
 
 async fn models_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {

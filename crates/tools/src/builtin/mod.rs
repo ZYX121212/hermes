@@ -7,6 +7,6 @@ mod web_search;
 
 pub use bash::BashTool;
 pub use file::{ReadFileTool, WriteFileTool};
-pub use guard::{ConfirmationPolicy, DangerGuard};
+pub use guard::{ApprovalPolicy, ApprovalResult, ConfirmationPolicy, DangerGuard, ToolGuard};
 pub use reply::ReplyTool;
 pub use web_search::{SearchConfig, WebSearchTool};

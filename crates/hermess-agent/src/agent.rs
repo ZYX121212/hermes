@@ -9,6 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::distiller::SkillDistiller;
+use crate::input_guard::PromptInjectionDetector;
+use crate::mimo::MiMoRunner;
+use llm::LlmAdapter;
 
 /// The default agent implementation, shared by CLI and web entrypoints.
 pub struct SmallHermesAgent {
@@ -29,12 +32,20 @@ pub struct SmallHermesAgent {
     pub compress_threshold: usize,
     /// Fraction of history to keep after compression (0.0–1.0).
     pub compress_keep_ratio: f64,
+    /// Optional auxiliary model for context compression (cheaper/faster).
+    pub compressor_llm: Option<Arc<dyn llm::LlmAdapter>>,
+    /// Target token count for compressed output (0 = no limit).
+    pub compress_target_tokens: usize,
     /// Conversation history for multi-turn context (user_input → summary pairs).
     pub conversation_history: Vec<(String, String)>,
     /// Recent evolution insights for closed-loop feedback into planning.
     pub recent_insights: Vec<String>,
     /// Automatic skill distillation from task execution traces.
     pub distiller: SkillDistiller,
+    /// Optional MiMo runner for multi-model planning.
+    pub mimo: Option<MiMoRunner>,
+    /// Prompt injection detector (if set, scans input before planning).
+    pub injection_detector: Option<PromptInjectionDetector>,
     /// TUI input state for in-terminal interactive input.
     #[cfg(feature = "tui")]
     pub tui_input: Option<Arc<tui::TuiInput>>,
@@ -158,7 +169,10 @@ impl SmallHermesAgent {
         Ok(())
     }
 
-    /// 当对话历史超过阈值时，用 LLM 压缩最旧的一半条目为一条摘要。
+    /// 当对话历史超过阈值时，压缩最旧的条目为一条摘要。
+    ///
+    /// 如果配置了 `compressor_llm`，则使用独立的压缩模型（通常更便宜/更快）；
+    /// 否则使用主 LLM。`compress_target_tokens` 控制输出长度目标（0=不限制）。
     pub async fn compress_history(&mut self) {
         if self.conversation_history.len() <= self.compress_threshold {
             return;
@@ -176,16 +190,49 @@ impl SmallHermesAgent {
             return;
         }
 
-        let prompt = format!(
+        let mut prompt = format!(
             "Compress the following conversation history into a single concise summary. \
              Preserve key context, decisions, and outcomes.\n\n{}",
             to_compress.join("\n")
         );
 
-        match self.llm.complete(prompt).await {
+        // Token budget hint: guide the compressor on desired output length
+        if self.compress_target_tokens > 0 {
+            prompt.push_str(&format!(
+                "\n\nKeep your summary under {} tokens.",
+                self.compress_target_tokens
+            ));
+        }
+
+        // Use compressor model if available, otherwise fall back to primary LLM
+        let compressor: &dyn llm::LlmAdapter = self
+            .compressor_llm
+            .as_deref()
+            .unwrap_or_else(|| self.llm.as_ref());
+
+        match compressor.complete(prompt).await {
             Ok(compressed) => {
+                let trimmed = compressed.trim().to_string();
+
+                // Enforce approximate token budget by truncating characters
+                // (~4 chars per token for most languages)
+                let final_compressed = if self.compress_target_tokens > 0
+                    && trimmed.len() > self.compress_target_tokens * 5
+                {
+                    let cutoff = self.compress_target_tokens * 5;
+                    let end = trimmed
+                        .char_indices()
+                        .take(cutoff)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(cutoff);
+                    trimmed[..end].to_string()
+                } else {
+                    trimmed
+                };
+
                 let mut new_history: Vec<(String, String)> =
-                    vec![("[历史摘要]".to_string(), compressed.trim().to_string())];
+                    vec![("[历史摘要]".to_string(), final_compressed)];
                 let keep_start = self.conversation_history.len().saturating_sub(keep);
                 let rest = self.conversation_history.split_off(keep_start);
                 new_history.extend(rest);
@@ -195,6 +242,7 @@ impl SmallHermesAgent {
                 tracing::info!(
                     compressed_entries = to_compress.len(),
                     remaining = self.conversation_history.len(),
+                    compressor = if self.compressor_llm.is_some() { "aux" } else { "primary" },
                     "上下文已压缩"
                 );
             }
@@ -391,6 +439,40 @@ impl HermesAgent for SmallHermesAgent {
     }
 
     async fn plan(&self, obs: Observation) -> anyhow::Result<Plan> {
+        // If MiMo is configured, use multi-model planning for better results
+        if let Some(ref mimo) = self.mimo {
+            let planner = self.planner.clone_for_mimo();
+            let factory: Arc<dyn Fn(Arc<dyn LlmAdapter>) -> planner::Planner + Send + Sync> =
+                Arc::new(move |llm: Arc<dyn LlmAdapter>| {
+                    let mut p = planner.clone_for_mimo();
+                    p.set_llm(llm);
+                    p
+                });
+            match mimo.plan(&factory, &obs).await {
+                Ok(result) => {
+                    self.emit(AgentEvent::GatewayRouteDecision {
+                        model: format!("mimo/{}", result.selected_model),
+                        shg_triggered: false,
+                        reason: format!(
+                            "MiMo: {}/{} workers, {}",
+                            result.candidates.len(),
+                            mimo.workers.len(),
+                            result.reasoning
+                        ),
+                    });
+                    tracing::info!(
+                        selected = %result.selected_model,
+                        candidates = result.candidates.len(),
+                        latency_ms = result.total_latency_ms,
+                        "MiMo planning complete"
+                    );
+                    return Ok(result.selected_plan);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "MiMo planning failed, falling back to single-model");
+                }
+            }
+        }
         self.planner.plan(obs).await
     }
 
@@ -447,6 +529,37 @@ impl HermesAgent for SmallHermesAgent {
             }
 
             let user_input = obs.user_input.clone();
+
+            // ── Prompt injection detection ──
+            if let Some(ref detector) = self.injection_detector {
+                let report = detector.analyze(&user_input);
+                if report.risk.should_block() {
+                    let msg = format!(
+                        "输入被安全策略拦截 (风险等级: {}, 评分: {:.0})\n匹配模式: {}",
+                        report.risk,
+                        report.score,
+                        report.matched_patterns.join(", ")
+                    );
+                    tracing::warn!(
+                        risk = %report.risk,
+                        score = report.score,
+                        "Prompt injection blocked"
+                    );
+                    self.emit(AgentEvent::AgentError {
+                        message: msg.clone(),
+                    });
+                    self.emit(AgentEvent::SummaryReady { summary: msg });
+                    continue;
+                }
+                if report.risk.should_warn() {
+                    tracing::info!(
+                        risk = %report.risk,
+                        score = report.score,
+                        patterns = ?report.matched_patterns,
+                        "Prompt flagged for review"
+                    );
+                }
+            }
 
             // Clone obs for potential replanning (plan() consumes the original)
             let obs_for_replan = obs.clone();

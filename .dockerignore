@@ -1,0 +1,11 @@
+/target/
+/.git/
+/.claude/
+/.github/
+/.hermess/
+**/*.md
+**/target/
+**/node_modules/
+.env
+*.log
+hermess_results_*.txt

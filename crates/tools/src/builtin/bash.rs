@@ -20,7 +20,7 @@ impl BashTool {
     /// 创建一个无守卫的 BashTool（向后兼容，不推荐）。
     pub fn unguarded() -> Self {
         Self {
-            guard: Arc::new(DangerGuard::new(ConfirmationPolicy::Skip, vec![])),
+            guard: Arc::new(DangerGuard::new(ConfirmationPolicy::Auto, vec![])),
         }
     }
 }

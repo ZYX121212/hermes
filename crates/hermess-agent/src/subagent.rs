@@ -105,9 +105,13 @@ pub async fn run_subagent(
         max_replans: 0,          // no replanning for sub-agents
         compress_threshold: 100, // effectively disable compression
         compress_keep_ratio: 1.0,
+        compressor_llm: None,
+        compress_target_tokens: 0,
         conversation_history: Vec::new(),
         recent_insights: Vec::new(),
         distiller: crate::distiller::SkillDistiller::new(),
+        mimo: None,
+        injection_detector: None,
         #[cfg(feature = "tui")]
         tui_input: None,
     };

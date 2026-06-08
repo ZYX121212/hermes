@@ -58,6 +58,24 @@ impl Planner {
         self.tool_descriptions = tools;
     }
 
+    /// Create a clone with a fresh LLM adapter for MiMo parallel planning.
+    /// Shares the same evolution engine, tool descriptions, and skill context.
+    pub fn clone_for_mimo(&self) -> Self {
+        Self {
+            llm: Arc::clone(&self.llm),
+            evolution: Arc::clone(&self.evolution),
+            tool_descriptions: self.tool_descriptions.clone(),
+            skill_context: self.skill_context.clone(),
+            streaming: false, // no streaming in MiMo workers
+            event_tx: None,   // no events from MiMo workers
+        }
+    }
+
+    /// Replace the LLM adapter (used by MiMo to assign different models).
+    pub fn set_llm(&mut self, llm: Arc<dyn LlmAdapter>) {
+        self.llm = llm;
+    }
+
     /// Override project skill context, mainly for tests and embedding hosts.
     pub fn set_skill_context(&mut self, skill_context: String) {
         self.skill_context = ProjectSkillContext::from_text(skill_context);
@@ -468,7 +486,7 @@ impl Planner {
 }
 
 #[derive(Debug, Clone, Default)]
-struct ProjectSkillContext {
+pub struct ProjectSkillContext {
     text: String,
 }
 

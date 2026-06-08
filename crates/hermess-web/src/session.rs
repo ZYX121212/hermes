@@ -126,6 +126,10 @@ impl SessionManager {
             conversation_history: Vec::new(),
             recent_insights: Vec::new(),
             distiller: hermess_agent::SkillDistiller::new(),
+            compressor_llm: None,
+            compress_target_tokens: 0,
+            mimo: None,
+            injection_detector: None,
             tui_input: None,
         };
 

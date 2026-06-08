@@ -110,6 +110,44 @@ pub struct MetricsSnapshot {
     pub upstream_errors: u64,
 }
 
+impl MetricsSnapshot {
+    /// Export as Prometheus text format.
+    pub fn to_prometheus(&self) -> String {
+        let mut out = String::new();
+        out.push_str("# HELP hermess_gateway_requests_total Total requests handled by the gateway\n");
+        out.push_str("# TYPE hermess_gateway_requests_total counter\n");
+        out.push_str(&format!("hermess_gateway_requests_total {}\n", self.total_requests));
+        out.push_str("# HELP hermess_gateway_auto_routed_total Requests routed via auto strategy\n");
+        out.push_str("# TYPE hermess_gateway_auto_routed_total counter\n");
+        out.push_str(&format!("hermess_gateway_auto_routed_total {}\n", self.auto_routed));
+        out.push_str("# HELP hermess_gateway_shg_triggers_total SHG detection triggers\n");
+        out.push_str("# TYPE hermess_gateway_shg_triggers_total counter\n");
+        out.push_str(&format!("hermess_gateway_shg_triggers_total {}\n", self.shg_triggers));
+        out.push_str("# HELP hermess_gateway_classifier_ok_total Classifier successes\n");
+        out.push_str("# TYPE hermess_gateway_classifier_ok_total counter\n");
+        out.push_str(&format!("hermess_gateway_classifier_ok_total {}\n", self.classifier_ok));
+        out.push_str("# HELP hermess_gateway_classifier_timeout_total Classifier timeouts\n");
+        out.push_str("# TYPE hermess_gateway_classifier_timeout_total counter\n");
+        out.push_str(&format!("hermess_gateway_classifier_timeout_total {}\n", self.classifier_timeout));
+        out.push_str("# HELP hermess_gateway_classifier_fallback_total Classifier fallbacks\n");
+        out.push_str("# TYPE hermess_gateway_classifier_fallback_total counter\n");
+        out.push_str(&format!("hermess_gateway_classifier_fallback_total {}\n", self.classifier_fallback));
+        out.push_str("# HELP hermess_gateway_upstream_errors_total Upstream provider errors\n");
+        out.push_str("# TYPE hermess_gateway_upstream_errors_total counter\n");
+        out.push_str(&format!("hermess_gateway_upstream_errors_total {}\n", self.upstream_errors));
+        out.push_str("# HELP hermess_gateway_decomposer_triggers_total Prompt decomposer triggers\n");
+        out.push_str("# TYPE hermess_gateway_decomposer_triggers_total counter\n");
+        out.push_str(&format!("hermess_gateway_decomposer_triggers_total {}\n", self.decomposer_triggers));
+        // strategy counts
+        out.push_str(&format!("# HELP hermess_gateway_route_decisions_total Route decisions by strategy (1=cost_first, 2=quality_first, 3=latency_first)\n"));
+        out.push_str("# TYPE hermess_gateway_route_decisions_total gauge\n");
+        out.push_str(&format!("hermess_gateway_route_decisions_total{{strategy=\"cost_first\"}} {}\n", self.cost_first_decisions));
+        out.push_str(&format!("hermess_gateway_route_decisions_total{{strategy=\"quality_first\"}} {}\n", self.quality_first_decisions));
+        out.push_str(&format!("hermess_gateway_route_decisions_total{{strategy=\"latency_first\"}} {}\n", self.latency_first_decisions));
+        out
+    }
+}
+
 impl std::fmt::Display for MetricsSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

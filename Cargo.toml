@@ -14,6 +14,7 @@ members = [
     "crates/hermess-web",
     "crates/mcp",
     "crates/hermess-gateway",
+    "crates/hermess-platform",
 ]
 resolver = "2"
 
@@ -72,6 +73,8 @@ tui = { path = "crates/tui" }
 mcp = { path = "crates/mcp" }
 hermess-gateway = { path = "crates/hermess-gateway" }
 hermess-finance = { path = "crates/hermess-finance" }
+hermess-platform = { path = "crates/hermess-platform" }
+dialoguer = "0.11"
 crossterm.workspace = true
 tokio.workspace = true
 clap.workspace = true

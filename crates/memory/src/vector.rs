@@ -53,6 +53,28 @@ impl VectorMemory {
 
         if qdrant_available {
             tracing::info!("Connected to Qdrant at {}", cfg.url);
+            // Auto-create collection if it doesn't exist
+            let create_url = format!("{}/collections/{}", cfg.url, cfg.collection);
+            let exists = client.head(&create_url).send().await;
+            if exists.map_or(true, |r| !r.status().is_success()) {
+                let body = serde_json::json!({
+                    "vectors": {
+                        "size": cfg.embedding_dim,
+                        "distance": "Cosine"
+                    }
+                });
+                match client.put(&create_url).json(&body).send().await {
+                    Ok(r) if r.status().is_success() => {
+                        tracing::info!("Created Qdrant collection '{}'", cfg.collection);
+                    }
+                    Ok(r) => {
+                        tracing::warn!("Failed to create Qdrant collection '{}': HTTP {}", cfg.collection, r.status());
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create Qdrant collection '{}': {e}", cfg.collection);
+                    }
+                }
+            }
         } else {
             tracing::info!(
                 "Qdrant not available at {} — using in-memory fallback",
