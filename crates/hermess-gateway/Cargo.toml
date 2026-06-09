@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Intelligent LLM routing gateway with complexity-based model selection"
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/ZYX121212/hermes"
+documentation = "https://github.com/ZYX121212/hermes#readme"
+keywords = ["llm", "agent", "ai", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 llm = { path = "../llm" }

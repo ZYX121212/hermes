@@ -1,4 +1,9 @@
-// crates/hermess-agent/src/lib.rs
+//! Default agent implementation with a five-phase self-evolution loop.
+//!
+//! The [`HermesAgent`] orchestrates planning, scheduling, reflection, evolution,
+//! and memory consolidation in a continuous reAct-style cycle.
+
+
 pub mod agent;
 pub mod crypto;
 pub mod curator;

@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Model Context Protocol stdio server for tool exposure"
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/ZYX121212/hermes"
+documentation = "https://github.com/ZYX121212/hermes#readme"
+keywords = ["llm", "agent", "ai", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 serde.workspace = true

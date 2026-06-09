@@ -1,5 +1,5 @@
-// crates/hermess-platform/src/lib.rs
-// 统一多平台适配层：定义 PlatformAdapter trait 和共享 Message 类型。
+//! 统一多平台适配层：定义 PlatformAdapter trait 和共享 Message 类型。
+
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::collections::VecDeque;

@@ -1,3 +1,5 @@
+//! Intelligent LLM routing gateway with complexity-based model selection.
+//!
 pub mod classifier;
 pub mod config;
 pub mod decision;

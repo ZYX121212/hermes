@@ -1,4 +1,6 @@
-// crates/reflector/src/lib.rs
+//! Execution result evaluation and failure attribution.
+//!
+
 pub mod attribution;
 pub mod reflector;
 

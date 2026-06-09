@@ -1,4 +1,6 @@
-// crates/hermess-web/src/lib.rs
+//! HTTP daemon with Feishu bot integration, general chat API, and WebSocket support.
+//!
+
 use serde::Deserialize;
 
 pub mod feishu;

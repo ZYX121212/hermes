@@ -1,6 +1,4 @@
-// crates/tui/src/lib.rs
-// TUI terminal interface for Hermes Agent using ratatui + crossterm.
-
+//! TUI terminal interface for Hermes Agent using ratatui + crossterm.
 pub mod keybindings;
 pub mod panels;
 pub mod render;

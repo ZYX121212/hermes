@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "HTTP daemon with Feishu bot integration and general chat API"
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/ZYX121212/hermes"
+documentation = "https://github.com/ZYX121212/hermes#readme"
+keywords = ["llm", "agent", "ai", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "hermess-webd"

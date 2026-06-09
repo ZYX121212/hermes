@@ -1,4 +1,6 @@
-// crates/memory/src/lib.rs
+//! Dual-layer memory system with working memory and vector long-term storage.
+//!
+
 pub mod dedup;
 pub mod embedding;
 pub mod preload;

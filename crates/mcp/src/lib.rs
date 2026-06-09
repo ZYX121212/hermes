@@ -1,5 +1,4 @@
-// crates/mcp/src/lib.rs
-// MCP (Model Context Protocol) implementation for Hermes Agent.
+//! MCP (Model Context Protocol) implementation for Hermes Agent.
 pub mod client;
 pub mod protocol;
 pub mod server;

@@ -1,4 +1,6 @@
-// crates/llm/src/lib.rs
+//! LLM adapter layer supporting Anthropic, OpenAI, and DeepSeek providers.
+//!
+
 pub mod adapter;
 pub mod anthropic;
 pub mod openai;

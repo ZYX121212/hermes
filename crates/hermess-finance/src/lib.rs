@@ -1,4 +1,9 @@
-// crates/hermess-finance/src/lib.rs
+//! Pluggable financial data layer for the Hermes agent.
+//!
+//! Provides unified access to A-shares, HK stocks, indices, funds, and macro
+//! indicators through multiple data providers (Fushare, TuShare, Sina, EastMoney, Tencent).
+
+
 // Pluggable financial data layer for Hermess agent.
 
 pub mod providers;

@@ -1,4 +1,6 @@
-// crates/tools/src/lib.rs
+//! Extensible tool framework with built-in bash, file, browser, search, and plugin support.
+//!
+
 pub mod browser;
 pub mod builtin;
 pub mod caller;

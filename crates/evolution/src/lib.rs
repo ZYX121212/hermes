@@ -1,4 +1,6 @@
-// crates/evolution/src/lib.rs
+//! Strategy weight learning engine with adaptive learning rate.
+//!
+
 pub mod engine;
 pub mod insight;
 pub mod scorer;
