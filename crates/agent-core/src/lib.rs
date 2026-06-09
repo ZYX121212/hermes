@@ -1,7 +1,8 @@
 //! Core types and traits for the Hermes agent framework.
 //!
-//! This crate defines the foundational abstractions: [`Agent`] trait, [`Session`],
-//! [`AgentContext`], and shared message/tool types used across the entire system.
+//! This crate defines the foundational abstractions: `HermesAgent` trait,
+//! `SessionState`, `Context`, and shared message/tool types used across
+//! the entire system.
 
 
 use serde::{Deserialize, Serialize};

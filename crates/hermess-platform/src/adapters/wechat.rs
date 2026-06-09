@@ -226,7 +226,7 @@ impl WechatAdapter {
     /// 将企业微信回调事件转换为 InboundMessage。
     ///
     /// 企业微信回调支持 JSON 格式（设置回调 URL 时选择 JSON 模式）。
-    /// 事件格式参考: https://developer.work.weixin.qq.com/document/path/90240
+    /// 事件格式参考: <https://developer.work.weixin.qq.com/document/path/90240>
     pub fn convert_event(&self, event: &Value) -> Option<InboundMessage> {
         /// 企业微信 API 中 MsgId/CreateTime 为整数，其他字段为字符串。
         /// 此 helper 统一处理两种类型。

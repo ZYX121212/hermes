@@ -53,7 +53,7 @@ impl SinaFinanceProvider {
     }
 
     /// Parse Sina's JS-variable format into structured data.
-    /// Format: var hq_str_<code>="name,open,prev_close,price,high,low,..."
+    /// Format: `var hq_str_{code}="name,open,prev_close,price,high,low,..."`
     pub fn parse_quote(raw: &str, code: &str) -> Option<QuoteRow> {
         let start = raw.find('"')? + 1;
         let end = raw.rfind('"')?;
