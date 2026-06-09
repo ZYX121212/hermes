@@ -3,8 +3,7 @@
 // Supports per-user and global rate limits, sliding window counters.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use parking_lot::Mutex;
 
 /// Token bucket rate limiter. Tokens refill at a constant rate up to a maximum
@@ -134,6 +133,7 @@ pub struct RateLimiter {
     configs: HashMap<String, RateLimitConfig>,
     users: Mutex<HashMap<String, UserLimiter>>,
     global_minute: Mutex<TokenBucket>,
+    #[allow(dead_code)]
     global_hour: Mutex<TokenBucket>,
     global_concurrent: Mutex<u32>,
     max_global_concurrent: u32,
@@ -178,7 +178,7 @@ impl RateLimiter {
     pub fn check(&self, user_id: &str) -> RateLimitResult {
         // 1. Global concurrent check
         {
-            let mut global = self.global_concurrent.lock();
+            let global = self.global_concurrent.lock();
             if *global >= self.max_global_concurrent {
                 return RateLimitResult {
                     allowed: false,
@@ -391,7 +391,7 @@ mod tests {
             assert!(bucket.try_consume());
         }
         assert!(!bucket.try_consume());
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(std::time::Duration::from_millis(20));
         // After 20ms at 100 tok/s, ~2 tokens refilled
         assert!(bucket.try_consume());
     }

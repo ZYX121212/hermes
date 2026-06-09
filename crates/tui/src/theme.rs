@@ -219,19 +219,33 @@ static THEME_FALLBACK: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(|| 
 
 // ── Backward-compatible color constants (match default tokyo-night theme) ──
 
+/// 主背景色
 pub const BG: Color = Color::Rgb(11, 18, 32);
+/// 面板背景色
 pub const PANEL: Color = Color::Rgb(15, 23, 42);
+/// 交替面板背景色
 pub const PANEL_ALT: Color = Color::Rgb(17, 31, 48);
+/// 边框色
 pub const BORDER: Color = Color::Rgb(51, 65, 85);
+/// 焦点边框色（高亮蓝）
 pub const BORDER_FOCUSED: Color = Color::Rgb(56, 189, 248);
+/// 主文本色
 pub const TEXT: Color = Color::Rgb(226, 232, 240);
+/// 弱化文本色
 pub const MUTED: Color = Color::Rgb(148, 163, 184);
+/// 极弱文本色
 pub const SUBTLE: Color = Color::Rgb(100, 116, 139);
+/// 青色（信息提示）
 pub const CYAN: Color = Color::Rgb(34, 211, 238);
+/// 蓝色（链接/高亮）
 pub const BLUE: Color = Color::Rgb(96, 165, 250);
+/// 绿色（成功状态）
 pub const GREEN: Color = Color::Rgb(52, 211, 153);
+/// 黄色（警告状态）
 pub const YELLOW: Color = Color::Rgb(251, 191, 36);
+/// 红色（错误状态）
 pub const RED: Color = Color::Rgb(248, 113, 113);
+/// 紫色（特殊标记）
 pub const MAGENTA: Color = Color::Rgb(216, 180, 254);
 
 // ── Widget builders (unchanged from existing code) ──

@@ -8,7 +8,8 @@ use std::time::Duration;
 use crate::{Tool, ToolOutput};
 
 /// Browser 工具共享状态：管理单个浏览器实例和 Tab。
-struct BrowserState {
+pub struct BrowserState {
+    #[allow(dead_code)]
     browser: Browser,
     tab: Arc<Tab>,
 }
@@ -53,6 +54,7 @@ impl BrowserState {
         Ok(data)
     }
 
+    #[allow(dead_code)]
     fn get_content(&self) -> anyhow::Result<String> {
         let html = self.tab.get_content()?;
         // HTML → text
@@ -82,6 +84,7 @@ impl BrowserState {
 // ===== Browser Navigate =====
 pub struct BrowserNavigateTool {
     state: Arc<std::sync::Mutex<Option<BrowserState>>>,
+    #[allow(dead_code)]
     timeout: Duration,
 }
 

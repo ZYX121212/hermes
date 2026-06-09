@@ -106,6 +106,7 @@ pub trait PlatformAdapter: Send + Sync {
 /// 用户 session：每个用户独立 agent 会话。
 #[derive(Debug)]
 struct UserSession {
+    #[allow(dead_code)]
     user_id: String,
     last_active: Instant,
     message_count: u64,
