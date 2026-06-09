@@ -320,6 +320,12 @@ pub struct ApiKeyManager {
     keys: Mutex<HashMap<String, (String, String)>>,
 }
 
+impl Default for ApiKeyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApiKeyManager {
     pub fn new() -> Self {
         Self {

@@ -139,7 +139,7 @@ impl MetricsSnapshot {
         out.push_str("# TYPE hermess_gateway_decomposer_triggers_total counter\n");
         out.push_str(&format!("hermess_gateway_decomposer_triggers_total {}\n", self.decomposer_triggers));
         // strategy counts
-        out.push_str(&format!("# HELP hermess_gateway_route_decisions_total Route decisions by strategy (1=cost_first, 2=quality_first, 3=latency_first)\n"));
+        out.push_str("# HELP hermess_gateway_route_decisions_total Route decisions by strategy (1=cost_first, 2=quality_first, 3=latency_first)\n");
         out.push_str("# TYPE hermess_gateway_route_decisions_total gauge\n");
         out.push_str(&format!("hermess_gateway_route_decisions_total{{strategy=\"cost_first\"}} {}\n", self.cost_first_decisions));
         out.push_str(&format!("hermess_gateway_route_decisions_total{{strategy=\"quality_first\"}} {}\n", self.quality_first_decisions));

@@ -117,7 +117,7 @@ impl TelegramAdapter {
         }
 
         self.http
-            .post(&self.api_url("sendMessage"))
+            .post(self.api_url("sendMessage"))
             .json(&body)
             .send()
             .await?;

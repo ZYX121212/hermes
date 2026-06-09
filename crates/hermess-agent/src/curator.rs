@@ -123,7 +123,7 @@ impl SkillCurator {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() || path.file_name().map_or(true, |n| n == ".archive") {
+            if !path.is_dir() || path.file_name().is_none_or(|n| n == ".archive") {
                 continue;
             }
             let skill_md = path.join("SKILL.md");
@@ -173,7 +173,7 @@ impl SkillCurator {
 
     /// Extract a comma-separated metadata field from YAML frontmatter.
     fn extract_field(content: &str, field: &str) -> Vec<String> {
-        let key = field.split('.').last().unwrap_or(field);
+        let key = field.split('.').next_back().unwrap_or(field);
         for line in content.lines() {
             let trimmed = line.trim();
             // Handle both "key: value" and "prefix.key: value" formats
@@ -255,7 +255,7 @@ impl SkillCurator {
                 .or_default()
                 .push(i);
         }
-        for (_, indices) in &hash_groups {
+        for indices in hash_groups.values() {
             if indices.len() > 1 {
                 for &idx in &indices[1..] {
                     actions.push((
@@ -517,6 +517,7 @@ pub struct OutdatedRef {
 }
 
 /// Levenshtein edit distance for fuzzy tool name matching.
+#[allow(clippy::needless_range_loop)]
 fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();

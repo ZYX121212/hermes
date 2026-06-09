@@ -26,7 +26,7 @@ struct Cli {
     // ═══ 以下为默认 agent 模式的参数 ═══
     #[arg(short, long, default_value = "config/default.toml")]
     config: String,
-    /// 配置预设: dev, prod 等（自动加载 config/profiles/<name>.toml）
+    /// 配置预设: dev, prod 等（自动加载 `config/profiles/{name}.toml`）
     #[arg(short, long)]
     profile: Option<String>,
     #[arg(short, long)]
@@ -667,7 +667,7 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 };
 
             // ── Model selection ──
-            let model: String;
+            
 
             // Build model items: try LiteLLM first, fallback to curated list
             let mut model_items: Vec<String> = Vec::new();
@@ -761,7 +761,7 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .items(&select_items)
                 .interact()?;
 
-            model = if model_items[model_idx] == "自定义输入..." {
+            let model: String = if model_items[model_idx] == "自定义输入..." {
                 // 仅当当前模型在已知列表中时才预填，避免垃圾值反复出现
                 let initial = if model_default_idx < model_items.len() - 1 {
                     current_model.as_str()

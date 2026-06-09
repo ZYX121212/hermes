@@ -4,19 +4,12 @@ use async_trait::async_trait;
 
 use crate::*;
 
+#[derive(Default)]
 pub struct SlackConfig {
     pub bot_token: String,
     pub signing_secret: Option<String>,
 }
 
-impl Default for SlackConfig {
-    fn default() -> Self {
-        Self {
-            bot_token: String::new(),
-            signing_secret: None,
-        }
-    }
-}
 
 pub struct SlackAdapter {
     config: SlackConfig,
