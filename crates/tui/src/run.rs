@@ -2150,11 +2150,28 @@ fn dispatch_slash_command(state: &mut TuiAppState, cmd: &str) {
             );
         }
         "/diff" => {
-            push_log(
-                state,
-                "[diff] 功能需要后端事件 plumbing，暂不可用。".into(),
-                false,
-            );
+            let output = std::process::Command::new("git")
+                .args(["diff", "--stat", "HEAD"])
+                .output();
+            let lines = match output {
+                Err(_) => vec!["错误: 无法执行 git 命令".into()],
+                Ok(out) if !out.status.success() => {
+                    vec!["当前目录不是 git 仓库，无法获取 diff".into()]
+                }
+                Ok(out) => {
+                    let text = String::from_utf8_lossy(&out.stdout).to_string();
+                    if text.trim().is_empty() {
+                        vec!["无变更 (git diff --stat HEAD 为空)".into()]
+                    } else {
+                        text.lines().map(|l| format!("  {l}")).collect()
+                    }
+                }
+            };
+            state.slash_command_popup = Some(crate::state::SlashResult {
+                title: "Diff".into(),
+                lines,
+                scroll: 0,
+            });
         }
         "/new" => {
             state.turn = 0;
@@ -5358,12 +5375,38 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_slash_diff_logs() {
+    fn test_dispatch_slash_diff_shows_popup() {
+        // /diff now executes git diff --stat HEAD and shows a popup (not a log entry).
         let mut state = make_state();
         dispatch_slash_command(&mut state, "/diff");
-        let last = state.log_entries.back().unwrap();
-        assert!(last.message.contains("diff"));
-        assert!(last.message.contains("暂不可用"));
+        // In the test environment we're inside a git repo, so git should succeed.
+        // Either way a popup must be produced (error or diff output).
+        assert!(
+            state.slash_command_popup.is_some(),
+            "/diff should always produce a popup"
+        );
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Diff");
+        assert!(!popup.lines.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_slash_diff_non_git_shows_error_popup() {
+        // Run /diff from a temp directory with no git repo.
+        let tmp = std::env::temp_dir().join("hermess_test_no_git");
+        let _ = std::fs::create_dir_all(&tmp);
+        let orig = std::env::current_dir().unwrap_or_default();
+        let _ = std::env::set_current_dir(&tmp);
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/diff");
+        let _ = std::env::set_current_dir(&orig);
+        let popup = state.slash_command_popup.unwrap();
+        // In a non-git dir, should show an error message
+        assert!(
+            popup.lines.iter().any(|l| l.contains("git 仓库") || l.contains("无变更") || l.contains("错误")),
+            "expected error/empty message in popup, got: {:?}",
+            popup.lines
+        );
     }
 
     #[test]
