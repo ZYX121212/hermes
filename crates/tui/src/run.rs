@@ -253,7 +253,7 @@ where
             }
 
             // 3. Check for input (~30fps)
-            if let Ok(true) = crossterm::event::poll(Duration::from_millis(33)) {
+            if let Ok(true) = crossterm::event::poll(Duration::from_millis(crate::render::RENDER_POLL_MS)) {
                 match crossterm::event::read() {
                     Ok(Event::Key(key)) => {
                         let mut state = app_state.write();
@@ -2697,6 +2697,16 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state
                 .streaming_buffer
                 .push_str(&crate::state::strip_html(&token));
+            // Cap buffer at 50KB: trim from the front keeping a clean line boundary
+            const STREAM_CAP: usize = 51_200;
+            if state.streaming_buffer.len() > STREAM_CAP {
+                let start = state.streaming_buffer.len() - STREAM_CAP;
+                let actual_start = state.streaming_buffer[start..]
+                    .find('\n')
+                    .map(|pos| start + pos + 1)
+                    .unwrap_or(start);
+                state.streaming_buffer = state.streaming_buffer[actual_start..].to_string();
+            }
         }
         AgentEvent::PlanReady { steps_count } => {
             state.plan_steps_count = steps_count;
@@ -2843,6 +2853,17 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
             state
                 .summary_streaming_buffer
                 .push_str(&crate::state::strip_html(&token));
+            // Cap summary buffer at 50KB (same logic as streaming_buffer)
+            const SUMMARY_CAP: usize = 51_200;
+            if state.summary_streaming_buffer.len() > SUMMARY_CAP {
+                let start = state.summary_streaming_buffer.len() - SUMMARY_CAP;
+                let actual_start = state.summary_streaming_buffer[start..]
+                    .find('\n')
+                    .map(|pos| start + pos + 1)
+                    .unwrap_or(start);
+                state.summary_streaming_buffer =
+                    state.summary_streaming_buffer[actual_start..].to_string();
+            }
         }
         AgentEvent::SummaryReady { summary } => {
             state.summary_streaming_buffer.clear();
@@ -6653,6 +6674,44 @@ mod tests {
         state.left_tab = crate::state::LeftTab::Plan;
         handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 1 });
         assert_eq!(state.left_tab, crate::state::LeftTab::Execution);
+    }
+
+    // ── 50KB streaming buffer cap ──
+
+    #[test]
+    fn test_plan_streaming_buffer_capped_at_50kb() {
+        let mut state = make_state();
+        // Generate >50KB of plan streaming tokens (line-based so cap triggers)
+        let big_token = "x".repeat(100) + "\n"; // 101 bytes per token
+        for _ in 0..600 {
+            handle_event(
+                &mut state,
+                AgentEvent::PlanStreamingToken { token: big_token.clone() },
+            );
+        }
+        // Buffer should be capped — well under 60*101=60600 bytes
+        assert!(
+            state.streaming_buffer.len() <= 51_200 + 1000, // allow last line overshoot
+            "streaming_buffer should be capped, got {} bytes",
+            state.streaming_buffer.len()
+        );
+    }
+
+    #[test]
+    fn test_summary_streaming_buffer_capped_at_50kb() {
+        let mut state = make_state();
+        let big_token = "y".repeat(100) + "\n";
+        for _ in 0..600 {
+            handle_event(
+                &mut state,
+                AgentEvent::SummaryStreamingToken { token: big_token.clone() },
+            );
+        }
+        assert!(
+            state.summary_streaming_buffer.len() <= 51_200 + 1000,
+            "summary_streaming_buffer should be capped, got {} bytes",
+            state.summary_streaming_buffer.len()
+        );
     }
 
     // ── handle_event: TurnStarted sets results_visible ──
