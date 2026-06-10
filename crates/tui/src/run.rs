@@ -2935,6 +2935,28 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
     }
 }
 
+// ── Public wrappers for integration / stress tests ──
+
+/// Drive an `AgentEvent` through the state machine (for tests & stress tests).
+pub fn handle_event_pub(state: &mut TuiAppState, event: AgentEvent) {
+    handle_event(state, event);
+}
+
+/// Submit a task text from outside the render loop (for tests & stress tests).
+pub fn submit_tui_input_pub(state: &mut TuiAppState, tui_input: &TuiInput, text: String) -> bool {
+    submit_tui_input(state, tui_input, text)
+}
+
+/// Reset state for the next task (for tests & stress tests).
+pub fn begin_next_task_input_pub(state: &mut TuiAppState, tui_input: &TuiInput) {
+    begin_next_task_input(state, tui_input);
+}
+
+/// Calculate how many input lines a given text occupies (for tests).
+pub fn input_line_count_for_pub(text: &str) -> u8 {
+    input_line_count_for(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
