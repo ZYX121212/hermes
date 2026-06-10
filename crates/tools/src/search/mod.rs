@@ -1,13 +1,13 @@
 // crates/tools/src/search/mod.rs
 // 增强搜索工具集：网页抓取、新闻搜索、图片搜索，集成 Tavily/Serper API。
-mod tavily;
 mod serper;
+mod tavily;
 
-pub use tavily::TavilyClient;
 pub use serper::SerperClient;
+pub use tavily::TavilyClient;
 
-use async_trait::async_trait;
 use crate::{Tool, ToolOutput};
+use async_trait::async_trait;
 
 /// 网页抓取配置
 pub struct FetchConfig {
@@ -129,7 +129,9 @@ impl NewsSearchTool {
         if let Some(ref s) = self.serper {
             return s.search_news(query, count).await;
         }
-        anyhow::bail!("news_search: no search backend configured (set TAVILY_API_KEY or SERPER_API_KEY)")
+        anyhow::bail!(
+            "news_search: no search backend configured (set TAVILY_API_KEY or SERPER_API_KEY)"
+        )
     }
 }
 
@@ -232,7 +234,10 @@ mod tests {
     fn test_web_fetch_schema() {
         let tool = WebFetchTool::new(FetchConfig::default());
         let schema = tool.schema();
-        assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("url")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("url")));
     }
 
     #[test]

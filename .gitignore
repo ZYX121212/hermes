@@ -26,6 +26,7 @@ config.json
 
 # Output files
 hermess_results*.txt
+hermess_plan*.txt
 
 # Environment
 .env

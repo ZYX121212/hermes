@@ -290,3 +290,203 @@ pub fn key(text: impl Into<String>) -> Span<'static> {
             .add_modifier(Modifier::BOLD),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Theme::default ──
+
+    #[test]
+    fn test_default_theme_colors() {
+        let theme = Theme::default();
+        assert_eq!(theme.colors.bg, "#0b1220");
+        assert_eq!(theme.colors.text, "#e2e8f0");
+        assert_eq!(theme.colors.cyan, "#22d3ee");
+        assert!(theme.bg() != Color::Rgb(0, 0, 0)); // not black
+    }
+
+    // ── Theme::parse ──
+
+    #[test]
+    fn test_parse_valid_hex() {
+        let color = Theme::parse("#ff0000");
+        assert_eq!(color, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn test_parse_hex_without_hash() {
+        let color = Theme::parse("00ff00");
+        assert_eq!(color, Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn test_parse_short_hex_returns_white() {
+        let color = Theme::parse("#fff");
+        assert_eq!(color, Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn test_parse_invalid_hex_returns_white() {
+        let color = Theme::parse("#zzzzzz");
+        assert_eq!(color, Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn test_parse_empty_string() {
+        let color = Theme::parse("");
+        assert_eq!(color, Color::Rgb(255, 255, 255));
+    }
+
+    // ── Theme presets ──
+
+    #[test]
+    fn test_preset_tokyo_night() {
+        let theme = Theme::preset("tokyo-night");
+        assert_eq!(theme.colors.bg, "#0b1220");
+    }
+
+    #[test]
+    fn test_preset_dracula() {
+        let theme = Theme::preset("dracula");
+        assert_eq!(theme.colors.bg, "#282a36");
+        assert_eq!(theme.colors.red, "#ff5555");
+    }
+
+    #[test]
+    fn test_preset_solarized_dark() {
+        let theme = Theme::preset("solarized-dark");
+        assert_eq!(theme.colors.bg, "#002b36");
+        assert_eq!(theme.colors.blue, "#268bd2");
+    }
+
+    #[test]
+    fn test_preset_gruvbox() {
+        let theme = Theme::preset("gruvbox");
+        assert_eq!(theme.colors.bg, "#282828");
+        assert_eq!(theme.colors.yellow, "#fabd2f");
+    }
+
+    #[test]
+    fn test_preset_unknown_falls_back_to_default() {
+        let theme = Theme::preset("nonexistent-theme");
+        assert_eq!(theme.colors.bg, "#0b1220"); // default
+    }
+
+    #[test]
+    fn test_preset_names() {
+        let names = Theme::preset_names();
+        assert!(names.contains(&"tokyo-night"));
+        assert!(names.contains(&"dracula"));
+        assert!(names.contains(&"solarized-dark"));
+        assert!(names.contains(&"gruvbox"));
+        assert_eq!(names.len(), 4);
+    }
+
+    // ── Theme color accessors ──
+
+    #[test]
+    fn test_all_color_accessors() {
+        let theme = Theme::default();
+        // Verify all accessors return valid colors (no panics)
+        let _ = theme.bg();
+        let _ = theme.panel();
+        let _ = theme.panel_alt();
+        let _ = theme.border();
+        let _ = theme.border_focused();
+        let _ = theme.text();
+        let _ = theme.muted();
+        let _ = theme.subtle();
+        let _ = theme.cyan();
+        let _ = theme.blue();
+        let _ = theme.green();
+        let _ = theme.yellow();
+        let _ = theme.red();
+        let _ = theme.magenta();
+    }
+
+    // ── Global theme constants ──
+
+    #[test]
+    fn test_color_constants_are_set() {
+        // All color constants should be valid non-zero colors (except potentially black)
+        assert_ne!(BG, Color::Reset);
+        assert_ne!(TEXT, Color::Reset);
+        assert_ne!(CYAN, Color::Reset);
+        assert_ne!(GREEN, Color::Reset);
+        assert_ne!(RED, Color::Reset);
+        assert_ne!(YELLOW, Color::Reset);
+    }
+
+    // ── Widget builders ──
+
+    #[test]
+    fn test_panel_block_does_not_panic() {
+        // Builder methods should not panic
+        let _block = panel_block("Test", CYAN, true);
+        let _block2 = panel_block("Test", CYAN, false);
+    }
+
+    #[test]
+    fn test_panel_block_focused_vs_unfocused() {
+        // Both should construct without issues
+        let _focused = panel_block("Test", CYAN, true);
+        let _unfocused = panel_block("Test", CYAN, false);
+    }
+
+    #[test]
+    fn test_title_line_is_non_empty() {
+        let line = title_line("Header", CYAN);
+        assert!(!line.spans.is_empty());
+    }
+
+    #[test]
+    fn test_empty_returns_styled_text() {
+        let line = empty("No data");
+        assert!(!line.spans.is_empty());
+    }
+
+    #[test]
+    fn test_key_returns_styled_span() {
+        let span = key("Ctrl+C");
+        assert!(span.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    // ── init_theme / current_theme ──
+
+    #[test]
+    fn test_init_and_current_theme() {
+        let custom = Theme::preset("dracula");
+        init_theme(custom);
+        let current = current_theme();
+        // OnceLock set works once — subsequent sets are no-ops,
+        // so we just verify current_theme doesn't panic
+        assert_eq!(current.colors.bg, "#282a36");
+    }
+
+    // ── Theme Deserialize (from TOML) ──
+
+    #[test]
+    fn test_theme_deserialize_from_toml() {
+        let toml_str = r##"
+[colors]
+bg = "#111111"
+panel = "#222222"
+panel_alt = "#333333"
+border = "#444444"
+border_focused = "#555555"
+text = "#eeeeee"
+muted = "#cccccc"
+subtle = "#999999"
+cyan = "#00ffff"
+blue = "#0000ff"
+green = "#00ff00"
+yellow = "#ffff00"
+red = "#ff0000"
+magenta = "#ff00ff"
+"##;
+        let theme: Theme = toml::from_str(toml_str).unwrap();
+        assert_eq!(theme.colors.bg, "#111111");
+        assert_eq!(theme.colors.red, "#ff0000");
+    }
+}

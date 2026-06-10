@@ -75,10 +75,8 @@ impl TelegramAdapter {
             .await?;
 
         let json: serde_json::Value = resp.json().await?;
-        let updates: Vec<serde_json::Value> = json["result"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let updates: Vec<serde_json::Value> =
+            json["result"].as_array().cloned().unwrap_or_default();
         Ok(updates)
     }
 
@@ -178,7 +176,10 @@ impl PlatformAdapter for TelegramAdapter {
         *running = true;
         drop(running);
 
-        tracing::info!("Telegram adapter started (polling every {}s)", self.config.poll_interval_secs);
+        tracing::info!(
+            "Telegram adapter started (polling every {}s)",
+            self.config.poll_interval_secs
+        );
         Ok(())
     }
 
@@ -293,6 +294,11 @@ mod tests {
         });
 
         let msg = adapter.convert_callback(&update["callback_query"]).unwrap();
-        assert_eq!(msg.kind, MessageKind::Button { callback_data: "action1:approve".into() });
+        assert_eq!(
+            msg.kind,
+            MessageKind::Button {
+                callback_data: "action1:approve".into()
+            }
+        );
     }
 }

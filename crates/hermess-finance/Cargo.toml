@@ -1,6 +1,6 @@
 [package]
 name = "hermess-finance"
-version = "0.1.0"
+version = "1.0.0"
 description = "Pluggable financial data abstraction layer for Hermess — A-shares, HK stocks, indices, funds, macro"
 license = "MIT"
 edition = "2021"

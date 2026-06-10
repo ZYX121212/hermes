@@ -18,4 +18,6 @@ pub mod shg;
 pub mod skills;
 pub mod strategy;
 
-pub use rate_limiter::{ApiKeyManager, RateLimitConfig, RateLimitResult, RateLimiter, UserRateStats};
+pub use rate_limiter::{
+    ApiKeyManager, RateLimitConfig, RateLimitResult, RateLimiter, UserRateStats,
+};

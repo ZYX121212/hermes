@@ -30,8 +30,13 @@ impl std::str::FromStr for ApprovalPolicy {
 #[derive(Debug, Clone)]
 pub enum ApprovalResult {
     Allow,
-    ConfirmRequired { danger_desc: String, cmd_summary: String },
-    Denied { reason: String },
+    ConfirmRequired {
+        danger_desc: String,
+        cmd_summary: String,
+    },
+    Denied {
+        reason: String,
+    },
 }
 
 /// 用户对某类危险命令的历史决定。
@@ -81,16 +86,10 @@ impl ToolGuard {
         match self.policy {
             ApprovalPolicy::Auto => ApprovalResult::Allow,
             ApprovalPolicy::Deny => ApprovalResult::Denied {
-                reason: format!(
-                    "危险命令被 Deny 策略自动拒绝: {}",
-                    Self::summarize(cmd)
-                ),
+                reason: format!("危险命令被 Deny 策略自动拒绝: {}", Self::summarize(cmd)),
             },
             ApprovalPolicy::Ask => ApprovalResult::ConfirmRequired {
-                danger_desc: format!(
-                    "检测到危险命令模式: {}",
-                    self.matched_pattern(cmd)
-                ),
+                danger_desc: format!("检测到危险命令模式: {}", self.matched_pattern(cmd)),
                 cmd_summary: Self::summarize(cmd).to_string(),
             },
         }
@@ -247,7 +246,10 @@ mod tests {
     #[test]
     fn test_deny_policy_blocks() {
         let guard = ToolGuard::new(ApprovalPolicy::Deny, vec![]);
-        assert!(matches!(guard.approve("rm -rf /"), ApprovalResult::Denied { .. }));
+        assert!(matches!(
+            guard.approve("rm -rf /"),
+            ApprovalResult::Denied { .. }
+        ));
     }
 
     #[test]
@@ -268,16 +270,25 @@ mod tests {
     #[test]
     fn test_smart_approval_remembers_allow() {
         let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
-        assert!(matches!(guard.approve("sudo systemctl restart"), ApprovalResult::ConfirmRequired { .. }));
+        assert!(matches!(
+            guard.approve("sudo systemctl restart"),
+            ApprovalResult::ConfirmRequired { .. }
+        ));
         guard.allow_always("sudo systemctl restart");
-        assert!(matches!(guard.approve("sudo apt update"), ApprovalResult::Allow));
+        assert!(matches!(
+            guard.approve("sudo apt update"),
+            ApprovalResult::Allow
+        ));
     }
 
     #[test]
     fn test_smart_approval_remembers_deny() {
         let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
         guard.deny_always("rm -rf /tmp/data");
-        assert!(matches!(guard.approve("rm -rf /tmp/data"), ApprovalResult::Denied { .. }));
+        assert!(matches!(
+            guard.approve("rm -rf /tmp/data"),
+            ApprovalResult::Denied { .. }
+        ));
     }
 
     #[test]
@@ -285,7 +296,10 @@ mod tests {
         let guard = ToolGuard::new(ApprovalPolicy::Ask, vec![]);
         guard.allow_always("sudo test");
         guard.forget_all();
-        assert!(matches!(guard.approve("sudo test"), ApprovalResult::ConfirmRequired { .. }));
+        assert!(matches!(
+            guard.approve("sudo test"),
+            ApprovalResult::ConfirmRequired { .. }
+        ));
     }
 
     #[test]

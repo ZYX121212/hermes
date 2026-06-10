@@ -104,10 +104,14 @@ pub fn render_input(frame: &mut Frame, area: Rect, state: &TuiAppState, focused:
                     .bg(theme::PANEL_ALT),
             ),
             Span::styled(
-                if focused {
-                    "   i 输入  |  / 搜索  |  : 命令"
+                if focused && state.agent_done {
+                    "   Enter/i 输入  |  / 搜索  |  : 命令"
+                } else if focused {
+                    "   p 取消  |  / 搜索  |  : 命令"
+                } else if state.agent_done {
+                    "   Tab 切换焦点  |  Enter/i 输入"
                 } else {
-                    "   Tab 切换焦点  |  i 输入"
+                    "   Tab 切换焦点"
                 },
                 Style::default().fg(theme::SUBTLE).bg(theme::PANEL_ALT),
             ),

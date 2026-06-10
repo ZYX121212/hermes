@@ -133,7 +133,11 @@ impl Embedder for OpenAIEmbedder {
         let body: serde_json::Value = resp.json().await?;
         let embedding: Vec<f32> = body["data"][0]["embedding"]
             .as_array()
-            .map(|arr| arr.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                    .collect()
+            })
             .unwrap_or_default();
         Ok(embedding)
     }

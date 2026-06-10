@@ -86,7 +86,10 @@ impl FeishuAdapter {
 
         let resp: Value = self
             .http
-            .post(format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.api_base()))
+            .post(format!(
+                "{}/open-apis/auth/v3/tenant_access_token/internal",
+                self.api_base()
+            ))
             .json(&serde_json::json!({
                 "app_id": self.config.app_id,
                 "app_secret": self.config.app_secret,
@@ -102,7 +105,9 @@ impl FeishuAdapter {
             .to_string();
         let expire_secs = resp["expire"].as_i64().unwrap_or(7200) as u64;
         let expires_at = Instant::now()
-            + Duration::from_secs(expire_secs.saturating_sub(self.config.token_refresh_margin_secs));
+            + Duration::from_secs(
+                expire_secs.saturating_sub(self.config.token_refresh_margin_secs),
+            );
 
         let mut cache = self.token_cache.lock();
         *cache = Some(TokenCache {

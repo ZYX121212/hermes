@@ -1,6 +1,6 @@
 [package]
 name = "hermess-agent"
-version = "0.1.0"
+version = "1.0.0"
 description = "Default agent implementation with five-phase self-evolution loop"
 license = "MIT"
 edition = "2021"

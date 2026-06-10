@@ -344,7 +344,9 @@ fn build_feishu_config(
         .feishu_app_id
         .clone()
         .or_else(|| {
-            std::env::var("FEISHU_APP_ID").ok().filter(|v| !v.is_empty())
+            std::env::var("FEISHU_APP_ID")
+                .ok()
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| {
             if !settings.feishu_app_id.is_empty() {
@@ -360,7 +362,9 @@ fn build_feishu_config(
         .feishu_app_secret
         .clone()
         .or_else(|| {
-            std::env::var("FEISHU_APP_SECRET").ok().filter(|v| !v.is_empty())
+            std::env::var("FEISHU_APP_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| {
             if !settings.feishu_app_secret.is_empty() {
@@ -376,7 +380,9 @@ fn build_feishu_config(
         .feishu_bot_open_id
         .clone()
         .or_else(|| {
-            std::env::var("FEISHU_BOT_OPEN_ID").ok().filter(|v| !v.is_empty())
+            std::env::var("FEISHU_BOT_OPEN_ID")
+                .ok()
+                .filter(|v| !v.is_empty())
         })
         .or_else(|| {
             if !settings.feishu_bot_open_id.is_empty() {
@@ -404,7 +410,9 @@ fn build_wechat_config(
         .wechat_corp_id
         .clone()
         .or_else(|| {
-            std::env::var("WECHAT_CORP_ID").ok().filter(|v| !v.is_empty())
+            std::env::var("WECHAT_CORP_ID")
+                .ok()
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| {
             if !settings.wechat_corp_id.is_empty() {
@@ -420,7 +428,9 @@ fn build_wechat_config(
         .wechat_corp_secret
         .clone()
         .or_else(|| {
-            std::env::var("WECHAT_CORP_SECRET").ok().filter(|v| !v.is_empty())
+            std::env::var("WECHAT_CORP_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| {
             if !settings.wechat_corp_secret.is_empty() {
@@ -525,9 +535,7 @@ fn fetch_litellm_model_list(
         let body: serde_json::Value = resp.json().await?;
 
         if !status.is_success() {
-            let msg = body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let msg = body["error"]["message"].as_str().unwrap_or("unknown error");
             anyhow::bail!("LiteLLM 返回错误 (HTTP {status}): {msg}");
         }
 
@@ -550,7 +558,9 @@ fn fetch_litellm_model_list(
             {
                 // Also keep models whose id starts with the provider name
                 // (e.g. "openai/gpt-4" for provider "openai")
-                if !id.contains('/') || !id.to_lowercase().starts_with(&format!("{}/", filter_lower)) {
+                if !id.contains('/')
+                    || !id.to_lowercase().starts_with(&format!("{}/", filter_lower))
+                {
                     continue;
                 }
             }
@@ -568,7 +578,7 @@ fn fetch_litellm_model_list(
 }
 
 fn run_configure(sections: &[String]) -> anyhow::Result<()> {
-    use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
+    use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 
     let theme = ColorfulTheme::default();
     let existing = tui::UserSettings::load();
@@ -639,35 +649,35 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
             }
 
             // ── LiteLLM endpoint (auto-fetch model list) ──
-            let effective_litellm_url: Option<String> =
-                if !existing.litellm_url.is_empty() {
-                    Some(existing.litellm_url.clone())
+            let effective_litellm_url: Option<String> = if !existing.litellm_url.is_empty() {
+                Some(existing.litellm_url.clone())
+            } else {
+                println!("\x1b[1;33m── LiteLLM 端点（自动获取最新模型列表）──\x1b[0m");
+                let url: String = Input::with_theme(&theme)
+                    .with_prompt("LiteLLM URL (可选，回车跳过)")
+                    .with_initial_text(&existing.litellm_url)
+                    .allow_empty(true)
+                    .validate_with(|v: &String| {
+                        if v.is_empty() {
+                            return Ok(());
+                        }
+                        if !v.starts_with("http://") && !v.starts_with("https://") {
+                            Err("URL 必须以 http:// 或 https:// 开头")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .interact()?;
+                if !url.is_empty() {
+                    next.litellm_url = url.clone();
+                    changed.set(true);
+                    Some(url)
                 } else {
-                    println!("\x1b[1;33m── LiteLLM 端点（自动获取最新模型列表）──\x1b[0m");
-                    let url: String = Input::with_theme(&theme)
-                        .with_prompt("LiteLLM URL (可选，回车跳过)")
-                        .with_initial_text(&existing.litellm_url)
-                        .allow_empty(true)
-                        .validate_with(|v: &String| {
-                            if v.is_empty() { return Ok(()); }
-                            if !v.starts_with("http://") && !v.starts_with("https://") {
-                                Err("URL 必须以 http:// 或 https:// 开头")
-                            } else {
-                                Ok(())
-                            }
-                        })
-                        .interact()?;
-                    if !url.is_empty() {
-                        next.litellm_url = url.clone();
-                        changed.set(true);
-                        Some(url)
-                    } else {
-                        None
-                    }
-                };
+                    None
+                }
+            };
 
             // ── Model selection ──
-            
 
             // Build model items: try LiteLLM first, fallback to curated list
             let mut model_items: Vec<String> = Vec::new();
@@ -681,7 +691,10 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                     next.llm_api_key.clone()
                 };
                 println!("\x1b[1;33m── 从 LiteLLM 获取 {provider} 模型列表 ──\x1b[0m");
-                println!("  \x1b[2m请求: {}/v1/models\x1b[0m", litellm_url.trim_end_matches('/'));
+                println!(
+                    "  \x1b[2m请求: {}/v1/models\x1b[0m",
+                    litellm_url.trim_end_matches('/')
+                );
                 match fetch_litellm_model_list(litellm_url, &effective_key, &provider) {
                     Ok(list) => {
                         println!("  \x1b[32m✓ 获取到 {} 个模型\x1b[0m", list.len());
@@ -722,11 +735,7 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                         "o3",
                         "o3-mini",
                     ],
-                    _ => &[
-                        "deepseek-chat",
-                        "deepseek-reasoner",
-                        "deepseek-chat-v3",
-                    ],
+                    _ => &["deepseek-chat", "deepseek-reasoner", "deepseek-chat-v3"],
                 };
                 for m in curated {
                     model_items.push(m.to_string());
@@ -737,13 +746,12 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
             // Add "自定义输入..." at the end
             model_items.push("自定义输入...".to_string());
 
-            let current_model = if existing.llm_provider != provider
-                || existing.llm_model.is_empty()
-            {
-                String::new()
-            } else {
-                existing.llm_model.clone()
-            };
+            let current_model =
+                if existing.llm_provider != provider || existing.llm_model.is_empty() {
+                    String::new()
+                } else {
+                    existing.llm_model.clone()
+                };
 
             let model_default_idx = model_ids
                 .iter()
@@ -772,14 +780,20 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                     .with_prompt("输入模型名")
                     .with_initial_text(initial)
                     .validate_with(|v: &String| {
-                        if v.trim().is_empty() { Err("模型名不能为空") } else { Ok(()) }
+                        if v.trim().is_empty() {
+                            Err("模型名不能为空")
+                        } else {
+                            Ok(())
+                        }
                     })
                     .interact()?
             } else {
                 model_ids[model_idx].clone()
             };
 
-            if model != existing.llm_model { changed.set(true); }
+            if model != existing.llm_model {
+                changed.set(true);
+            }
             next.llm_model = model;
 
             let base_url: String = Input::with_theme(&theme)
@@ -795,10 +809,14 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                     }
                 })
                 .interact()?;
-            if base_url != existing.llm_base_url { changed.set(true); }
+            if base_url != existing.llm_base_url {
+                changed.set(true);
+            }
             next.llm_base_url = base_url;
 
-            if next.llm_provider != existing.llm_provider { changed.set(true); }
+            if next.llm_provider != existing.llm_provider {
+                changed.set(true);
+            }
         }
     }
 
@@ -819,13 +837,16 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .items(&["是", "否"])
                 .interact()?
                 == 0;
-            if enable_search != existing.search_enabled { changed.set(true); }
+            if enable_search != existing.search_enabled {
+                changed.set(true);
+            }
             next.search_enabled = enable_search;
 
             if enable_search {
                 let search_key: String = Password::with_theme(&theme)
                     .with_prompt(format!(
-                        "Brave Search API Key (当前: {})", tui::UserSettings::mask_key(&existing.search_api_key)
+                        "Brave Search API Key (当前: {})",
+                        tui::UserSettings::mask_key(&existing.search_api_key)
                     ))
                     .allow_empty_password(true)
                     .interact()?;
@@ -859,14 +880,17 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .items(fin_providers)
                 .interact()?;
             let fin = fin_providers[fin_idx].to_string();
-            if fin != existing.finance_provider { changed.set(true); }
+            if fin != existing.finance_provider {
+                changed.set(true);
+            }
             next.finance_provider = fin;
 
             if fin_idx == 1 {
                 // tushare needs token
                 let token: String = Password::with_theme(&theme)
                     .with_prompt(format!(
-                        "Tushare Token (当前: {})", tui::UserSettings::mask_key(&existing.finance_tushare_token)
+                        "Tushare Token (当前: {})",
+                        tui::UserSettings::mask_key(&existing.finance_tushare_token)
                     ))
                     .allow_empty_password(true)
                     .interact()?;
@@ -897,15 +921,22 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .with_prompt("App ID")
                 .with_initial_text(&existing.feishu_app_id)
                 .validate_with(|v: &String| {
-                    if v.trim().is_empty() { Err("App ID 不能为空") } else { Ok(()) }
+                    if v.trim().is_empty() {
+                        Err("App ID 不能为空")
+                    } else {
+                        Ok(())
+                    }
                 })
                 .interact()?;
-            if app_id != existing.feishu_app_id { changed.set(true); }
+            if app_id != existing.feishu_app_id {
+                changed.set(true);
+            }
             next.feishu_app_id = app_id;
 
             let app_secret: String = Password::with_theme(&theme)
                 .with_prompt(format!(
-                    "App Secret (当前: {})", tui::UserSettings::mask_key(&existing.feishu_app_secret)
+                    "App Secret (当前: {})",
+                    tui::UserSettings::mask_key(&existing.feishu_app_secret)
                 ))
                 .allow_empty_password(true)
                 .interact()?;
@@ -919,7 +950,9 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .with_initial_text(&existing.feishu_bot_open_id)
                 .allow_empty(true)
                 .interact()?;
-            if bot_open_id != existing.feishu_bot_open_id { changed.set(true); }
+            if bot_open_id != existing.feishu_bot_open_id {
+                changed.set(true);
+            }
             next.feishu_bot_open_id = bot_open_id;
         }
     }
@@ -943,15 +976,22 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .with_prompt("Corp ID (企业ID)")
                 .with_initial_text(&existing.wechat_corp_id)
                 .validate_with(|v: &String| {
-                    if v.trim().is_empty() { Err("Corp ID 不能为空") } else { Ok(()) }
+                    if v.trim().is_empty() {
+                        Err("Corp ID 不能为空")
+                    } else {
+                        Ok(())
+                    }
                 })
                 .interact()?;
-            if corp_id != existing.wechat_corp_id { changed.set(true); }
+            if corp_id != existing.wechat_corp_id {
+                changed.set(true);
+            }
             next.wechat_corp_id = corp_id;
 
             let corp_secret: String = Password::with_theme(&theme)
                 .with_prompt(format!(
-                    "Corp Secret (当前: {})", tui::UserSettings::mask_key(&existing.wechat_corp_secret)
+                    "Corp Secret (当前: {})",
+                    tui::UserSettings::mask_key(&existing.wechat_corp_secret)
                 ))
                 .allow_empty_password(true)
                 .interact()?;
@@ -964,10 +1004,16 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
                 .with_prompt("Agent ID (应用AgentID)")
                 .with_initial_text(&existing.wechat_agent_id)
                 .validate_with(|v: &String| {
-                    if v.trim().is_empty() { Err("Agent ID 不能为空") } else { Ok(()) }
+                    if v.trim().is_empty() {
+                        Err("Agent ID 不能为空")
+                    } else {
+                        Ok(())
+                    }
                 })
                 .interact()?;
-            if agent_id != existing.wechat_agent_id { changed.set(true); }
+            if agent_id != existing.wechat_agent_id {
+                changed.set(true);
+            }
             next.wechat_agent_id = agent_id;
         }
     }
@@ -990,12 +1036,21 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
         println!("  搜索 Key: \x1b[33m已更新\x1b[0m");
     }
     if existing.search_enabled != next.search_enabled {
-        println!("  搜索: {} → \x1b[33m{}\x1b[0m",
-            if existing.search_enabled { "开" } else { "关" },
+        println!(
+            "  搜索: {} → \x1b[33m{}\x1b[0m",
+            if existing.search_enabled {
+                "开"
+            } else {
+                "关"
+            },
             if next.search_enabled { "开" } else { "关" },
         );
     }
-    show_diff("金融数据源", &existing.finance_provider, &next.finance_provider);
+    show_diff(
+        "金融数据源",
+        &existing.finance_provider,
+        &next.finance_provider,
+    );
     if existing.finance_tushare_token != next.finance_tushare_token {
         println!("  Tushare Token: \x1b[33m已更新\x1b[0m");
     }
@@ -1003,16 +1058,37 @@ fn run_configure(sections: &[String]) -> anyhow::Result<()> {
     if existing.feishu_app_secret != next.feishu_app_secret {
         println!("  飞书 App Secret: \x1b[33m已更新\x1b[0m");
     }
-    show_diff("飞书 Bot Open ID", &existing.feishu_bot_open_id, &next.feishu_bot_open_id);
-    show_diff("企微 Corp ID", &existing.wechat_corp_id, &next.wechat_corp_id);
+    show_diff(
+        "飞书 Bot Open ID",
+        &existing.feishu_bot_open_id,
+        &next.feishu_bot_open_id,
+    );
+    show_diff(
+        "企微 Corp ID",
+        &existing.wechat_corp_id,
+        &next.wechat_corp_id,
+    );
     if existing.wechat_corp_secret != next.wechat_corp_secret {
         println!("  企微 Corp Secret: \x1b[33m已更新\x1b[0m");
     }
-    show_diff("企微 Agent ID", &existing.wechat_agent_id, &next.wechat_agent_id);
+    show_diff(
+        "企微 Agent ID",
+        &existing.wechat_agent_id,
+        &next.wechat_agent_id,
+    );
     if existing.litellm_url != next.litellm_url {
-        println!("  LiteLLM URL: {} → \x1b[33m{}\x1b[0m",
-            if existing.litellm_url.is_empty() { "(未设置)" } else { &existing.litellm_url },
-            if next.litellm_url.is_empty() { "(未设置)" } else { &next.litellm_url },
+        println!(
+            "  LiteLLM URL: {} → \x1b[33m{}\x1b[0m",
+            if existing.litellm_url.is_empty() {
+                "(未设置)"
+            } else {
+                &existing.litellm_url
+            },
+            if next.litellm_url.is_empty() {
+                "(未设置)"
+            } else {
+                &next.litellm_url
+            },
         );
     }
 

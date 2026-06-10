@@ -340,8 +340,9 @@ mod tests {
     #[test]
     fn test_parse_key_single_letter_aliases() {
         // Default single-letter aliases for common actions
-        for letter in &['q', 'h', 'j', 'k', 'l', 'n', 's', 'c', 'w', 'g', 'e', 'f', 'y', 't', 'o']
-        {
+        for letter in &[
+            'q', 'h', 'j', 'k', 'l', 'n', 's', 'c', 'w', 'g', 'e', 'f', 'y', 't', 'o',
+        ] {
             let desc = parse_key(&letter.to_string()).unwrap();
             assert_eq!(desc.code, KeyCode::Char(*letter));
         }
@@ -369,18 +370,48 @@ mod tests {
     fn test_default_bindings_has_all_actions() {
         let kb = KeyBindings::default();
         let actions = [
-            "quit", "submit", "newline", "toggle_help", "toggle_settings",
-            "toggle_kanban", "toggle_log", "focus_next", "focus_prev",
-            "tab_next", "tab_prev", "scroll_up", "scroll_down",
-            "page_up", "page_down", "scroll_bottom",
-            "settings_save", "settings_cancel", "search", "search_next", "search_prev",
-            "clear_line", "delete_word", "history_up", "history_down",
-            "select_next", "select_prev", "select_confirm",
-            "new_tab", "close_tab", "overlay_close", "slash_command",
-            "cancel", "copy", "home", "end",
+            "quit",
+            "submit",
+            "newline",
+            "toggle_help",
+            "toggle_settings",
+            "toggle_kanban",
+            "toggle_log",
+            "focus_next",
+            "focus_prev",
+            "tab_next",
+            "tab_prev",
+            "scroll_up",
+            "scroll_down",
+            "page_up",
+            "page_down",
+            "scroll_bottom",
+            "settings_save",
+            "settings_cancel",
+            "search",
+            "search_next",
+            "search_prev",
+            "clear_line",
+            "delete_word",
+            "history_up",
+            "history_down",
+            "select_next",
+            "select_prev",
+            "select_confirm",
+            "new_tab",
+            "close_tab",
+            "overlay_close",
+            "slash_command",
+            "cancel",
+            "copy",
+            "home",
+            "end",
         ];
         for action in &actions {
-            assert!(kb.bindings.contains_key(*action), "missing binding: {action}");
+            assert!(
+                kb.bindings.contains_key(*action),
+                "missing binding: {action}"
+            );
         }
     }
 

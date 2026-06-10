@@ -366,3 +366,153 @@ fn render_field_list(frame: &mut Frame, area: Rect, state: &TuiAppState, fields:
         area,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TuiAppState;
+    use std::sync::Arc;
+
+    fn make_state() -> TuiAppState {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        TuiAppState::new("test".into(), evo)
+    }
+
+    #[test]
+    fn test_field_rendered_provider_known() {
+        let mut state = make_state();
+        state.user_settings.llm_provider = "anthropic".into();
+        let field = FieldDef {
+            label: "提供商标识",
+            kind: FieldKind::Dropdown,
+        };
+        assert_eq!(field.rendered_value(&state), "Anthropic");
+    }
+
+    #[test]
+    fn test_field_rendered_provider_empty() {
+        let mut state = make_state();
+        state.user_settings.llm_provider = String::new();
+        let field = FieldDef {
+            label: "提供商标识",
+            kind: FieldKind::Dropdown,
+        };
+        assert_eq!(field.rendered_value(&state), "(未设置)");
+    }
+
+    #[test]
+    fn test_field_rendered_model_empty() {
+        let mut state = make_state();
+        state.user_settings.llm_model = String::new();
+        let field = FieldDef {
+            label: "模型名称",
+            kind: FieldKind::Text,
+        };
+        assert_eq!(field.rendered_value(&state), "(使用默认)");
+    }
+
+    #[test]
+    fn test_field_rendered_model_set() {
+        let mut state = make_state();
+        state.user_settings.llm_model = "claude-sonnet-4-6".into();
+        let field = FieldDef {
+            label: "模型名称",
+            kind: FieldKind::Text,
+        };
+        assert_eq!(field.rendered_value(&state), "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_field_rendered_api_key_masked() {
+        let mut state = make_state();
+        // Default API key is empty, mask_key("") returns ""
+        // Set a non-empty key to test masking
+        state.user_settings.llm_api_key = "sk-secret-key-12345".into();
+        let field = FieldDef {
+            label: "API Key",
+            kind: FieldKind::Text,
+        };
+        let val = field.rendered_value(&state);
+        // Non-empty key should be masked (contain ***)
+        assert!(
+            !val.contains("sk-secret"),
+            "API key should be masked, got: {val}"
+        );
+    }
+
+    #[test]
+    fn test_field_rendered_search_toggle() {
+        let mut state = make_state();
+        state.user_settings.search_enabled = true;
+        let field = FieldDef {
+            label: "启用搜索",
+            kind: FieldKind::Toggle,
+        };
+        assert!(field.rendered_value(&state).contains('●'));
+
+        state.user_settings.search_enabled = false;
+        assert!(field.rendered_value(&state).contains('○'));
+    }
+
+    #[test]
+    fn test_field_rendered_finance_provider() {
+        let mut state = make_state();
+        state.user_settings.finance_provider = "tushare".into();
+        let field = FieldDef {
+            label: "金融数据源",
+            kind: FieldKind::Dropdown,
+        };
+        assert!(field.rendered_value(&state).contains("TuShare"));
+
+        state.user_settings.finance_provider = "eastmoney".into();
+        assert!(field.rendered_value(&state).contains("东方财富"));
+    }
+
+    #[test]
+    fn test_field_rendered_theme_preset() {
+        let state = make_state();
+        let field = FieldDef {
+            label: "预设主题",
+            kind: FieldKind::Dropdown,
+        };
+        assert_eq!(field.rendered_value(&state), "tokyo-night");
+    }
+
+    #[test]
+    fn test_field_rendered_feishu_fields() {
+        let mut state = make_state();
+        state.user_settings.feishu_app_id = "cli_abc123".into();
+        let field_id = FieldDef {
+            label: "App ID",
+            kind: FieldKind::Text,
+        };
+        assert_eq!(field_id.rendered_value(&state), "cli_abc123");
+
+        let field_empty = FieldDef {
+            label: "App ID",
+            kind: FieldKind::Text,
+        };
+        let empty_state = make_state();
+        assert_eq!(field_empty.rendered_value(&empty_state), "(未设置)");
+    }
+
+    #[test]
+    fn test_fields_for_tab_counts() {
+        assert_eq!(fields_for_tab(SettingsTab::Llm).len(), 4);
+        assert_eq!(fields_for_tab(SettingsTab::Search).len(), 2);
+        assert_eq!(fields_for_tab(SettingsTab::Finance).len(), 2);
+        assert_eq!(fields_for_tab(SettingsTab::Theme).len(), 1);
+        assert_eq!(fields_for_tab(SettingsTab::Feishu).len(), 2);
+    }
+
+    #[test]
+    fn test_field_rendered_unknown_label() {
+        let state = make_state();
+        let field = FieldDef {
+            label: "nonexistent_field",
+            kind: FieldKind::Text,
+        };
+        assert_eq!(field.rendered_value(&state), "?");
+    }
+}

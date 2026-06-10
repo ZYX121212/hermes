@@ -289,4 +289,106 @@ mod tests {
         assert!(text.contains('α'), "expected α in: {text}");
         assert!(text.contains('β'), "expected β in: {text}");
     }
+
+    #[test]
+    fn test_italic() {
+        let line = render_markdown_line("this is *italic* text", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "this is italic text");
+    }
+
+    #[test]
+    fn test_multiple_inline_codes() {
+        let line = render_markdown_line("use `foo` and `bar`", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains(" foo "), "got: {text}");
+        assert!(text.contains(" bar "), "got: {text}");
+    }
+
+    #[test]
+    fn test_code_block_without_language() {
+        let input = "before\n```\nplain code\n```\nafter";
+        let lines = render_markdown_lines(input, test_style());
+        assert!(lines.len() >= 3, "got {} lines", lines.len());
+    }
+
+    #[test]
+    fn test_code_block_unclosed_flushed() {
+        let input = "before\n```\ncode without closing";
+        let lines = render_markdown_lines(input, test_style());
+        // Unclosed code block should still be flushed
+        assert!(lines.len() >= 1, "got {} lines", lines.len());
+    }
+
+    #[test]
+    fn test_table_detection_in_markdown() {
+        let input = "| Name | Value |\n| --- | --- |\n| A | 1 |\n| B | 2 |";
+        let lines = render_markdown_lines(input, test_style());
+        // Table lines should be rendered (exact count depends on framing)
+        assert!(!lines.is_empty(), "should have at least some lines");
+    }
+
+    #[test]
+    fn test_unclosed_table_flushed() {
+        let input = "| Name | Value |\n| --- | --- |\n| A | 1 |";
+        let lines = render_markdown_lines(input, test_style());
+        assert!(!lines.is_empty(), "should have at least some lines");
+    }
+
+    #[test]
+    fn test_asterisk_only() {
+        let line = render_markdown_line("*", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "*");
+    }
+
+    #[test]
+    fn test_double_asterisk_only() {
+        let line = render_markdown_line("**", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // Two unmatched asterisks
+        assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn test_find_closing() {
+        let chars: Vec<char> = "hello `code` end".chars().collect();
+        assert_eq!(find_closing(&chars, 7, '`'), Some(11));
+        assert_eq!(find_closing(&chars, 0, 'x'), None);
+    }
+
+    #[test]
+    fn test_find_closing_double() {
+        // "hello **bold** end"
+        //  ^      ^^    ^^
+        //  0      67    12
+        let chars: Vec<char> = "hello **bold** end".chars().collect();
+        // Starting after "**" (position 7), find closing "**" (starts at 12)
+        assert_eq!(find_closing_double(&chars, 7, '*'), Some(12));
+        assert_eq!(find_closing_double(&chars, 0, 'x'), None);
+    }
+
+    // ── Edge cases ──
+
+    #[test]
+    fn test_bold_and_italic_combined() {
+        let line = render_markdown_line("**bold** and *italic*", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("bold"));
+        assert!(text.contains("italic"));
+    }
+
+    #[test]
+    fn test_code_with_asterisk_inside() {
+        // content inside backticks should NOT be italicized
+        let line = render_markdown_line("`*not italic*`", test_style());
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("*not italic*"));
+    }
+
+    #[test]
+    fn test_empty_input_lines() {
+        let lines = render_markdown_lines("", test_style());
+        assert!(lines.is_empty());
+    }
 }

@@ -45,10 +45,7 @@ pub enum CuratorAction {
         reason: String,
     },
     /// Archive a stale skill (move to .archive/).
-    Archive {
-        name: String,
-        reason: String,
-    },
+    Archive { name: String, reason: String },
     /// No action needed — skill is healthy.
     Keep,
 }
@@ -177,18 +174,15 @@ impl SkillCurator {
         for line in content.lines() {
             let trimmed = line.trim();
             // Handle both "key: value" and "prefix.key: value" formats
-            if let Some(val) = trimmed
-                .strip_prefix(&format!("{key}:"))
-                .or_else(|| {
-                    // Check if the line ends with "key: value"
-                    let suffix = format!("{key}:");
-                    if trimmed.contains(&suffix) {
-                        trimmed.split(&suffix).nth(1)
-                    } else {
-                        None
-                    }
-                })
-            {
+            if let Some(val) = trimmed.strip_prefix(&format!("{key}:")).or_else(|| {
+                // Check if the line ends with "key: value"
+                let suffix = format!("{key}:");
+                if trimmed.contains(&suffix) {
+                    trimmed.split(&suffix).nth(1)
+                } else {
+                    None
+                }
+            }) {
                 return val
                     .trim()
                     .split(',')
@@ -210,7 +204,9 @@ impl SkillCurator {
                 if in_backtick {
                     let word = current.trim().to_string();
                     if !word.is_empty()
-                        && word.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                        && word
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
                     {
                         tools.push(word);
                     }
@@ -367,9 +363,7 @@ impl SkillCurator {
         let mut tgt_content = std::fs::read_to_string(&tgt_md)?;
 
         // Append source content as a subsection
-        tgt_content.push_str(&format!(
-            "\n\n---\n## 合并自 {source}\n\n{src_content}\n"
-        ));
+        tgt_content.push_str(&format!("\n\n---\n## 合并自 {source}\n\n{src_content}\n"));
 
         std::fs::write(&tgt_md, &tgt_content)?;
         std::fs::remove_dir_all(&src_dir)?;
@@ -452,7 +446,9 @@ impl SkillPatcher {
                         let sim = 1.0 - (dist as f64 / max_len as f64);
                         (name.clone(), dist, sim)
                     })
-                    .max_by(|(_, _, a), (_, _, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    .max_by(|(_, _, a), (_, _, b)| {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    });
 
                 if let Some((candidate, _dist, similarity)) = best_match {
                     if similarity >= 0.5 {

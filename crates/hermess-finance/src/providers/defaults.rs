@@ -84,7 +84,12 @@ pub fn build_finance_provider(options: FinanceProviderOptions) -> Arc<dyn Financ
     }
 
     if providers.len() == 1 {
-        Arc::from(providers.into_iter().next().expect("providers has exactly one element"))
+        Arc::from(
+            providers
+                .into_iter()
+                .next()
+                .expect("providers has exactly one element"),
+        )
     } else {
         let names: Vec<&str> = providers.iter().map(|p| p.provider_name()).collect();
         tracing::info!(

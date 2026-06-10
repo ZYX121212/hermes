@@ -4,7 +4,6 @@
 //! `SessionState`, `Context`, and shared message/tool types used across
 //! the entire system.
 
-
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

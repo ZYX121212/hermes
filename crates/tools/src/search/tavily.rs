@@ -67,7 +67,10 @@ impl TavilyClient {
                 let title = r["title"].as_str().unwrap_or("(untitled)");
                 let url = r["url"].as_str().unwrap_or("");
                 let content = r["content"].as_str().unwrap_or("");
-                out.push_str(&format!("{}. {title}\n   URL: {url}\n   {content}\n\n", i + 1));
+                out.push_str(&format!(
+                    "{}. {title}\n   URL: {url}\n   {content}\n\n",
+                    i + 1
+                ));
             }
         }
 

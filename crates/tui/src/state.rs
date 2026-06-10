@@ -1120,10 +1120,7 @@ mod tests {
         // Bar should only contain '█' and '│'
         let bar = render_scrollbar(5, 50, 10);
         for c in bar.chars() {
-            assert!(
-                c == '█' || c == '│',
-                "unexpected char in scrollbar: {c:?}"
-            );
+            assert!(c == '█' || c == '│', "unexpected char in scrollbar: {c:?}");
         }
     }
 

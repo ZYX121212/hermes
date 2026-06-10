@@ -11,7 +11,10 @@ pub enum ExecMode {
     /// 直接在宿主机执行（仅限受信环境）
     Host,
     /// Docker 容器隔离执行
-    Docker { image: String, network_disabled: bool },
+    Docker {
+        image: String,
+        network_disabled: bool,
+    },
 }
 
 impl Default for ExecMode {
@@ -62,7 +65,10 @@ impl PythonExecTool {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{stdout}{stderr}");
 
-        let truncated: String = combined.chars().take(self.config.max_output_bytes).collect();
+        let truncated: String = combined
+            .chars()
+            .take(self.config.max_output_bytes)
+            .collect();
         if truncated.len() < combined.len() {
             Ok(format!("{truncated}\n... (output truncated)"))
         } else if truncated.is_empty() {
@@ -72,7 +78,12 @@ impl PythonExecTool {
         }
     }
 
-    async fn exec_docker(&self, code: &str, image: &str, net_disabled: bool) -> anyhow::Result<String> {
+    async fn exec_docker(
+        &self,
+        code: &str,
+        image: &str,
+        net_disabled: bool,
+    ) -> anyhow::Result<String> {
         let escaped = code.replace('\"', "\\\"");
         let mut cmd = tokio::process::Command::new("docker");
         cmd.arg("run")
@@ -87,10 +98,7 @@ impl PythonExecTool {
             cmd.arg("--network=none");
         }
 
-        cmd.arg(image)
-            .arg("python3")
-            .arg("-c")
-            .arg(&escaped);
+        cmd.arg(image).arg("python3").arg("-c").arg(&escaped);
 
         let output = tokio::time::timeout(self.config.timeout, cmd.output())
             .await
@@ -134,14 +142,16 @@ impl Tool for PythonExecTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let code = args["code"].as_str()
+        let code = args["code"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("code_exec_python: 'code' is required"))?;
 
         let result = match &self.config.mode {
             ExecMode::Host => self.exec_host(code).await?,
-            ExecMode::Docker { image, network_disabled } => {
-                self.exec_docker(code, image, *network_disabled).await?
-            }
+            ExecMode::Docker {
+                image,
+                network_disabled,
+            } => self.exec_docker(code, image, *network_disabled).await?,
         };
 
         Ok(ToolOutput {
@@ -187,7 +197,8 @@ impl Tool for JsExecTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let code = args["code"].as_str()
+        let code = args["code"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("code_exec_js: 'code' is required"))?;
 
         let output = tokio::time::timeout(
@@ -203,7 +214,10 @@ impl Tool for JsExecTool {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{stdout}{stderr}");
-        let result: String = combined.chars().take(self.config.max_output_bytes).collect();
+        let result: String = combined
+            .chars()
+            .take(self.config.max_output_bytes)
+            .collect();
         Ok(ToolOutput::text(result))
     }
 }
@@ -243,7 +257,8 @@ impl Tool for CodeExecBashTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let cmd = args["command"].as_str()
+        let cmd = args["command"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("code_exec_bash: 'command' is required"))?;
 
         let output = tokio::time::timeout(
@@ -259,7 +274,10 @@ impl Tool for CodeExecBashTool {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{stdout}{stderr}");
-        let result: String = combined.chars().take(self.config.max_output_bytes).collect();
+        let result: String = combined
+            .chars()
+            .take(self.config.max_output_bytes)
+            .collect();
         Ok(ToolOutput {
             success: output.status.success(),
             content: result,
@@ -276,7 +294,10 @@ mod tests {
     fn test_python_schema() {
         let tool = PythonExecTool::new(SandboxConfig::default());
         let s = tool.schema();
-        assert!(s["required"].as_array().unwrap().contains(&serde_json::json!("code")));
+        assert!(s["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("code")));
     }
 
     #[test]
@@ -288,7 +309,9 @@ mod tests {
     #[tokio::test]
     async fn test_python_exec_host() {
         let tool = PythonExecTool::new(SandboxConfig::default());
-        let result = tool.call(serde_json::json!({"code": "print('hello from python')"})).await;
+        let result = tool
+            .call(serde_json::json!({"code": "print('hello from python')"}))
+            .await;
         assert!(result.is_ok());
         assert!(result.unwrap().content.contains("hello from python"));
     }
@@ -296,7 +319,9 @@ mod tests {
     #[tokio::test]
     async fn test_js_exec_host() {
         let tool = JsExecTool::new(SandboxConfig::default());
-        let result = tool.call(serde_json::json!({"code": "console.log('hello from js')"})).await;
+        let result = tool
+            .call(serde_json::json!({"code": "console.log('hello from js')"}))
+            .await;
         assert!(result.is_ok());
         assert!(result.unwrap().content.contains("hello from js"));
     }

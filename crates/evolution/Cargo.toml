@@ -1,6 +1,6 @@
 [package]
 name = "evolution"
-version = "0.1.0"
+version = "1.0.0"
 description = "Strategy weight learning engine with adaptive learning rate"
 license = "MIT"
 edition = "2021"

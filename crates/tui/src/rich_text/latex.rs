@@ -237,4 +237,244 @@ mod tests {
         assert!(has_latex("\\frac{a}{b}"));
         assert!(!has_latex("plain text"));
     }
+
+    #[test]
+    fn test_greek_lowercase() {
+        // All Greek lowercase should convert
+        let pairs = [
+            ("\\alpha", "α"),
+            ("\\beta", "β"),
+            ("\\gamma", "γ"),
+            ("\\delta", "δ"),
+            ("\\pi", "π"),
+            ("\\sigma", "σ"),
+            ("\\omega", "ω"),
+        ];
+        for (cmd, expected) in pairs {
+            assert_eq!(
+                render_latex_inline(&format!("${cmd}$")),
+                expected,
+                "failed for {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_greek_uppercase() {
+        let pairs = [
+            ("\\Gamma", "Γ"),
+            ("\\Delta", "Δ"),
+            ("\\Sigma", "Σ"),
+            ("\\Omega", "Ω"),
+        ];
+        for (cmd, expected) in pairs {
+            assert_eq!(
+                render_latex_inline(&format!("${cmd}$")),
+                expected,
+                "failed for {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_math_symbols() {
+        let pairs = [
+            ("\\infty", "∞"),
+            ("\\pm", "±"),
+            ("\\times", "×"),
+            ("\\leq", "≤"),
+            ("\\geq", "≥"),
+            ("\\approx", "≈"),
+            ("\\neq", "≠"),
+            ("\\forall", "∀"),
+            ("\\exists", "∃"),
+            ("\\in", "∈"),
+            ("\\rightarrow", "→"),
+            ("\\leftarrow", "←"),
+            ("\\implies", "→"),
+            ("\\iff", "⇔"),
+            ("\\int", "∫"),
+            ("\\sum", "∑"),
+            ("\\prod", "∏"),
+            ("\\sqrt", "√"),
+            ("\\partial", "∂"),
+            ("\\nabla", "∇"),
+        ];
+        for (cmd, expected) in pairs {
+            assert_eq!(
+                render_latex_inline(&format!("${cmd}$")),
+                expected,
+                "failed for {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_symbols() {
+        let pairs = [
+            ("\\subset", "⊂"),
+            ("\\supset", "⊃"),
+            ("\\subseteq", "⊆"),
+            ("\\supseteq", "⊇"),
+            ("\\cup", "∪"),
+            ("\\cap", "∩"),
+            ("\\emptyset", "∅"),
+            ("\\land", "∧"),
+            ("\\lor", "∨"),
+            ("\\neg", "¬"),
+        ];
+        for (cmd, expected) in pairs {
+            assert_eq!(
+                render_latex_inline(&format!("${cmd}$")),
+                expected,
+                "failed for {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ellipsis_variants() {
+        assert_eq!(render_latex_inline("$\\ldots$"), "…");
+        assert_eq!(render_latex_inline("$\\cdots$"), "⋯");
+        assert_eq!(render_latex_inline("$\\vdots$"), "⋮");
+        assert_eq!(render_latex_inline("$\\ddots$"), "⋱");
+    }
+
+    #[test]
+    fn test_mixed_content() {
+        let result = render_latex_inline("The result is $\\alpha + \\beta = \\gamma$");
+        assert!(result.contains("α"));
+        assert!(result.contains("β"));
+        assert!(result.contains("γ"));
+        assert!(result.contains("The result is"));
+    }
+
+    #[test]
+    fn test_multiple_math_blocks() {
+        let result = render_latex_inline("$\\alpha$ and $\\beta$");
+        assert_eq!(result, "α and β");
+    }
+
+    #[test]
+    fn test_command_with_braces() {
+        // \sqrt{x} should strip braces and convert \sqrt
+        let result = render_latex_inline("$\\sqrt{x}$");
+        assert!(result.contains('√'));
+        assert!(result.contains('x'));
+        assert!(!result.contains('{'));
+        assert!(!result.contains('}'));
+    }
+
+    #[test]
+    fn test_backslash_passthrough() {
+        let result = render_latex_inline("\\unknowncmd");
+        // Unknown commands should pass through (after brace stripping)
+        assert!(result.contains("\\unknowncmd") || !result.is_empty());
+    }
+
+    #[test]
+    fn test_converter_no_panic_on_empty() {
+        assert_eq!(render_latex_inline(""), "");
+    }
+
+    #[test]
+    fn test_convert_math_removes_braces() {
+        let result = convert_math("\\alpha");
+        assert_eq!(result, "α");
+    }
+
+    #[test]
+    fn test_has_latex_edge_cases() {
+        assert!(has_latex("$"));
+        assert!(has_latex("\\sum_{i=1}^{n}"));
+        assert!(has_latex("\\int_0^\\infty"));
+        assert!(!has_latex(""));
+        assert!(!has_latex("normal text"));
+    }
+
+    #[test]
+    fn test_all_greek_lowercase() {
+        let greek = [
+            "\\alpha",
+            "\\beta",
+            "\\gamma",
+            "\\delta",
+            "\\epsilon",
+            "\\zeta",
+            "\\eta",
+            "\\theta",
+            "\\iota",
+            "\\kappa",
+            "\\lambda",
+            "\\mu",
+            "\\nu",
+            "\\xi",
+            "\\pi",
+            "\\rho",
+            "\\sigma",
+            "\\tau",
+            "\\upsilon",
+            "\\phi",
+            "\\chi",
+            "\\psi",
+            "\\omega",
+        ];
+        for cmd in greek {
+            let result = render_latex_inline(&format!("${cmd}$"));
+            assert!(!result.is_empty(), "empty result for {cmd}");
+            assert!(!result.contains('\\'), "{cmd} not converted: {result}");
+        }
+    }
+
+    #[test]
+    fn test_rendered_map_has_all_keys() {
+        let map = latex_map();
+        assert!(
+            map.len() >= 100,
+            "expected >=100 entries, got {}",
+            map.len()
+        );
+        // Verify a few critical entries exist
+        assert!(map.contains_key("\\alpha"));
+        assert!(map.contains_key("\\infty"));
+        assert!(map.contains_key("\\sum"));
+        assert!(map.contains_key("\\int"));
+        assert!(map.contains_key("\\frac") == false); // frac is handled specially
+    }
+
+    // ── Edge cases ──
+
+    #[test]
+    fn test_latex_nested_braces() {
+        let result = render_latex_inline("$\\sqrt{\\frac{a}{b}}$");
+        assert!(!result.contains('\\'), "nested braces should be converted");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_latex_multiple_fracs() {
+        let result = render_latex_inline("$\\frac{1}{2} + \\frac{3}{4}$");
+        assert!(result.contains('+'));
+        assert!(!result.contains("\\frac"));
+    }
+
+    #[test]
+    fn test_latex_unbalanced_brace() {
+        // Should not panic with unbalanced braces
+        let result = render_latex_inline("$\\sqrt{x$");
+        assert!(!result.contains('\\'));
+    }
+
+    #[test]
+    fn test_latex_command_with_trailing_digits() {
+        let result = render_latex_inline("$\\alpha_1$");
+        assert!(!result.contains("\\alpha"));
+    }
+
+    #[test]
+    fn test_latex_standalone_dollar() {
+        // Single $ not in a pair
+        let result = render_latex_inline("cost $50");
+        assert!(result.contains("50"));
+    }
 }

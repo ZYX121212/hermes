@@ -10,7 +10,6 @@ pub struct SlackConfig {
     pub signing_secret: Option<String>,
 }
 
-
 pub struct SlackAdapter {
     config: SlackConfig,
     http: reqwest::Client,

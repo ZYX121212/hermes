@@ -119,3 +119,60 @@ pub fn populate_suggestions(state: &mut TuiAppState) {
 
     state.context_ref_selected = 0;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TuiAppState;
+    use std::sync::Arc;
+
+    fn make_state() -> TuiAppState {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        TuiAppState::new("test".into(), evo)
+    }
+
+    #[test]
+    fn test_populate_suggestions_always_adds_git_diff() {
+        let mut state = make_state();
+        state.context_ref_query = "@".into();
+        populate_suggestions(&mut state);
+        assert!(state
+            .context_ref_items
+            .iter()
+            .any(|i| i.source == "git" && i.label == "git:diff"));
+        assert_eq!(state.context_ref_selected, 0);
+    }
+
+    #[test]
+    fn test_populate_suggestions_adds_memory_with_query() {
+        let mut state = make_state();
+        state.context_ref_query = "@bug".into();
+        populate_suggestions(&mut state);
+        assert!(state
+            .context_ref_items
+            .iter()
+            .any(|i| i.source == "mem" && i.label.contains("bug")));
+    }
+
+    #[test]
+    fn test_populate_suggestions_no_memory_without_query() {
+        let mut state = make_state();
+        state.context_ref_query = "@".into();
+        populate_suggestions(&mut state);
+        assert!(state.context_ref_items.iter().all(|i| i.source != "mem"));
+    }
+
+    #[test]
+    fn test_populate_suggestions_clears_previous_items() {
+        let mut state = make_state();
+        state.context_ref_items.push(ContextRefItem {
+            source: "file".into(),
+            label: "old".into(),
+            preview: String::new(),
+        });
+        state.context_ref_query = "@".into();
+        populate_suggestions(&mut state);
+        assert!(state.context_ref_items.iter().all(|i| i.label != "old"));
+    }
+}

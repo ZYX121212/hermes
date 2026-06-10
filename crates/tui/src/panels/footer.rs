@@ -41,6 +41,12 @@ pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState, focused
         }
     } else if state.output_overlay.is_some() {
         "[Esc] 关闭  [↑↓] 滚动  [←→/n/p] 切步骤  [Ctrl+Y] 复制".to_string()
+    } else if !state.search_match_lines.is_empty() {
+        let cur = state.search_current_match.map(|i| i + 1).unwrap_or(0);
+        let total = state.search_match_lines.len();
+        format!("[n/N] 上一个/下一个匹配 ({cur}/{total})  [Esc] 清除匹配  [/] 继续搜索")
+    } else if state.search_active {
+        "[Enter] 执行搜索  [Esc] 取消  [←→] 移光标".to_string()
     } else if state.slash_command_active {
         "[Enter] 执行  [Esc] 取消  [←→] 移光标  : /help 查看全部命令".to_string()
     } else if state.awaiting_input {
@@ -78,7 +84,9 @@ pub fn render_footer(frame: &mut Frame, area: Rect, state: &TuiAppState, focused
             (FocusedPanel::MiniLog, _, _, _) => {
                 format!("[Tab] 下一面板  [↑↓] 滚动  [f] 过滤{ctx_hint}{global}")
             }
-            (FocusedPanel::Input, _, _, _) => "[Tab] 下一面板  [h] 帮助".to_string(),
+            (FocusedPanel::Input, _, _, _) => {
+                "输入字符开始新任务  [Tab] 下一面板  [h] 帮助".to_string()
+            }
         }
     };
 

@@ -24,10 +24,7 @@ fn drive_agent_turn(state: &mut TuiAppState, turn: u32) {
     handle_event_pub(state, AgentEvent::TurnStarted { turn: turn as u64 });
     handle_event_pub(state, AgentEvent::PlanPhaseStarted);
     handle_event_pub(state, AgentEvent::PlanReady { steps_count: 1 });
-    handle_event_pub(
-        state,
-        AgentEvent::ExecutePhaseStarted { total_steps: 1 },
-    );
+    handle_event_pub(state, AgentEvent::ExecutePhaseStarted { total_steps: 1 });
     handle_event_pub(
         state,
         AgentEvent::SummaryReady {
@@ -74,7 +71,10 @@ fn stress_100_rounds() {
             AgentPhase::Idle,
             "phase should be Idle after round {round}"
         );
-        assert!(state.agent_done, "agent_done should be true after round {round}");
+        assert!(
+            state.agent_done,
+            "agent_done should be true after round {round}"
+        );
         assert!(
             state.log_entries.len() <= 200,
             "log_entries exceeded 200 on round {round}: {}",

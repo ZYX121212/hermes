@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "agent-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "evolution"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -1132,7 +1132,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermes"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "hermess-agent"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "agent-core",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "hermess-finance"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "hermess-gateway"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1244,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "hermess-platform"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "hermess-web"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -1728,7 +1728,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1815,7 +1815,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1834,7 +1834,7 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "memory"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -2139,7 +2139,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "planner"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "reflector"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -2653,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "scheduler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -3306,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -3481,7 +3481,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agent-core",
  "anyhow",

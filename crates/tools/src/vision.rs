@@ -153,7 +153,10 @@ impl Tool for VisionDescribeTool {
             .ok_or_else(|| anyhow::anyhow!("vision_describe: 'image_path' is required"))?;
         let result = self
             .inner
-            .call_vision_api(image_path, "Describe this image concisely. What do you see?")
+            .call_vision_api(
+                image_path,
+                "Describe this image concisely. What do you see?",
+            )
             .await?;
         Ok(ToolOutput::text(result))
     }
@@ -167,8 +170,14 @@ mod tests {
     fn test_schema_has_required_fields() {
         let tool = VisionTool::new("http://localhost".into(), "key".into(), "gpt-4".into());
         let schema = tool.schema();
-        assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("image_path")));
-        assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("prompt")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("image_path")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("prompt")));
     }
 
     #[test]

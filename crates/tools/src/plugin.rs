@@ -126,7 +126,10 @@ impl Tool for ScriptPlugin {
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let interpreter = self.manifest.interpreter.as_deref().unwrap_or("sh");
-        if !matches!(interpreter, "sh" | "bash" | "python3" | "python" | "node" | "ruby" | "perl") {
+        if !matches!(
+            interpreter,
+            "sh" | "bash" | "python3" | "python" | "node" | "ruby" | "perl"
+        ) {
             return Ok(ToolOutput::error(format!(
                 "不支持的脚本解释器: {interpreter}。允许: sh, bash, python3, python, node, ruby, perl"
             )));

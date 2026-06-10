@@ -134,7 +134,10 @@ impl Tool for McpCallToolTool {
         let tool_name = args["tool_name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("mcp_call_tool: 'tool_name' is required"))?;
-        let arguments = args.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+        let arguments = args
+            .get("arguments")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
 
         let result = self.client.call_tool(tool_name, arguments).await?;
         let text: String = result

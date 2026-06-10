@@ -1,6 +1,6 @@
 [package]
 name = "hermess-gateway"
-version = "0.1.0"
+version = "1.0.0"
 description = "Intelligent LLM routing gateway with complexity-based model selection"
 license = "MIT"
 edition = "2021"

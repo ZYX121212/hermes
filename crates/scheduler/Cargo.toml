@@ -1,6 +1,6 @@
 [package]
 name = "scheduler"
-version = "0.1.0"
+version = "1.0.0"
 description = "DAG-based concurrent step executor with retry and fallback support"
 license = "MIT"
 edition = "2021"

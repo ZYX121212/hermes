@@ -143,15 +143,9 @@ impl MiMoRunner {
 
         // ── Phase 2: Aggregation ──
         let (selected_idx, reasoning) = match self.strategy {
-            AggregateStrategy::MajorityVote => {
-                self.aggregate_majority(&candidates).await
-            }
-            AggregateStrategy::BestOfN => {
-                self.aggregate_best_of_n(&candidates, obs).await
-            }
-            AggregateStrategy::Synthesize => {
-                self.aggregate_synthesize(&candidates, obs).await
-            }
+            AggregateStrategy::MajorityVote => self.aggregate_majority(&candidates).await,
+            AggregateStrategy::BestOfN => self.aggregate_best_of_n(&candidates, obs).await,
+            AggregateStrategy::Synthesize => self.aggregate_synthesize(&candidates, obs).await,
         };
 
         let total_ms = start.elapsed().as_millis() as u64;
@@ -167,10 +161,7 @@ impl MiMoRunner {
     }
 
     /// Majority vote: count tool selections and pick the most common tool chain.
-    async fn aggregate_majority(
-        &self,
-        candidates: &[(usize, MiMoCandidate)],
-    ) -> (usize, String) {
+    async fn aggregate_majority(&self, candidates: &[(usize, MiMoCandidate)]) -> (usize, String) {
         use std::collections::HashMap;
 
         // Build a fingerprint for each plan: sequence of tool names
@@ -228,10 +219,7 @@ impl MiMoRunner {
         obs: &Observation,
     ) -> (usize, String) {
         if candidates.len() == 1 {
-            return (
-                0,
-                "仅有一个候选方案，无需评判".to_string(),
-            );
+            return (0, "仅有一个候选方案，无需评判".to_string());
         }
 
         let prompt = build_judge_prompt(candidates, &obs.user_input, false);
@@ -254,10 +242,7 @@ impl MiMoRunner {
         obs: &Observation,
     ) -> (usize, String) {
         if candidates.len() == 1 {
-            return (
-                0,
-                "仅有一个候选方案，无需综合".to_string(),
-            );
+            return (0, "仅有一个候选方案，无需综合".to_string());
         }
 
         let prompt = build_judge_prompt(candidates, &obs.user_input, true);

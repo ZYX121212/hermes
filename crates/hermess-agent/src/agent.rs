@@ -242,7 +242,11 @@ impl SmallHermesAgent {
                 tracing::info!(
                     compressed_entries = to_compress.len(),
                     remaining = self.conversation_history.len(),
-                    compressor = if self.compressor_llm.is_some() { "aux" } else { "primary" },
+                    compressor = if self.compressor_llm.is_some() {
+                        "aux"
+                    } else {
+                        "primary"
+                    },
                     "上下文已压缩"
                 );
             }
@@ -575,7 +579,7 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    continue;
+                    break;
                 }
             };
 
@@ -589,7 +593,7 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    continue;
+                    break;
                 }
             };
             result.user_input = Some(user_input.clone());
@@ -648,7 +652,7 @@ impl HermesAgent for SmallHermesAgent {
                         message: msg.clone(),
                     });
                     self.emit(AgentEvent::SummaryReady { summary: msg });
-                    continue;
+                    break;
                 }
             };
             self.emit(AgentEvent::ReflectPhaseComplete {

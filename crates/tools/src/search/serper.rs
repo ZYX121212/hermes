@@ -54,7 +54,10 @@ impl SerperClient {
                 let link = item["link"].as_str().unwrap_or("");
                 let snippet = item["snippet"].as_str().unwrap_or("");
                 let date = item["date"].as_str().unwrap_or("");
-                out.push_str(&format!("{}. {title}\n   Date: {date}\n   URL: {link}\n   {snippet}\n\n", i + 1));
+                out.push_str(&format!(
+                    "{}. {title}\n   Date: {date}\n   URL: {link}\n   {snippet}\n\n",
+                    i + 1
+                ));
             }
             if out == "News results:\n\n" {
                 out = "(no news results)".into();
@@ -85,7 +88,10 @@ impl SerperClient {
                 let title = img["title"].as_str().unwrap_or("(untitled)");
                 let url = img["imageUrl"].as_str().unwrap_or("");
                 let source = img["source"].as_str().unwrap_or("");
-                out.push_str(&format!("{}. {title}\n   Image: {url}\n   Source: {source}\n\n", i + 1));
+                out.push_str(&format!(
+                    "{}. {title}\n   Image: {url}\n   Source: {source}\n\n",
+                    i + 1
+                ));
             }
         }
         if out == "Image search results:\n\n" {
@@ -101,7 +107,10 @@ impl SerperClient {
                 let title = r["title"].as_str().unwrap_or("(untitled)");
                 let link = r["link"].as_str().unwrap_or("");
                 let snippet = r["snippet"].as_str().unwrap_or("");
-                out.push_str(&format!("{}. {title}\n   URL: {link}\n   {snippet}\n\n", i + 1));
+                out.push_str(&format!(
+                    "{}. {title}\n   URL: {link}\n   {snippet}\n\n",
+                    i + 1
+                ));
             }
         }
         if out.is_empty() {

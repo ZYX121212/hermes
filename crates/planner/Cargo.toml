@@ -1,6 +1,6 @@
 [package]
 name = "planner"
-version = "0.1.0"
+version = "1.0.0"
 description = "LLM-driven task decomposition into executable step DAGs"
 license = "MIT"
 edition = "2021"

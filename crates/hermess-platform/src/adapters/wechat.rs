@@ -306,10 +306,8 @@ impl WechatAdapter {
                 match event_type {
                     "click" | "view" => {
                         let from_user = event.get("FromUserName")?.as_str()?;
-                        let event_key = event
-                            .get("EventKey")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let event_key =
+                            event.get("EventKey").and_then(|v| v.as_str()).unwrap_or("");
                         Some(InboundMessage {
                             message_id: format!(
                                 "{}_{event_type}",
@@ -357,21 +355,16 @@ impl WechatAdapter {
                             .and_then(|arr| arr.first());
                         let selected = first_item
                             .and_then(|item| {
-                                item.get("OptionId")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| {
-                                        item.get("OptionIds")
-                                            .and_then(|ids| ids.as_array())
-                                            .and_then(|ids| ids.first())
-                                            .and_then(|id| id.as_str())
-                                    })
+                                item.get("OptionId").and_then(|v| v.as_str()).or_else(|| {
+                                    item.get("OptionIds")
+                                        .and_then(|ids| ids.as_array())
+                                        .and_then(|ids| ids.first())
+                                        .and_then(|id| id.as_str())
+                                })
                             })
                             .unwrap_or("");
                         Some(InboundMessage {
-                            message_id: format!(
-                                "tmpl_{}",
-                                val_str(event.get("CreateTime")?)?
-                            ),
+                            message_id: format!("tmpl_{}", val_str(event.get("CreateTime")?)?),
                             user_id: from_user.to_string(),
                             chat_id: chat_id.to_string(),
                             text: String::new(),
@@ -546,7 +539,9 @@ mod tests {
         let msg = adapter.convert_event(&event).unwrap();
         assert_eq!(msg.text, "帮我查一下订单状态");
         match msg.kind {
-            MessageKind::Voice { ref transcription, .. } => {
+            MessageKind::Voice {
+                ref transcription, ..
+            } => {
                 assert_eq!(transcription.as_deref(), Some("帮我查一下订单状态"));
             }
             _ => panic!("Expected Voice kind"),

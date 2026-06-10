@@ -143,7 +143,10 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let snapshot = state.gateway.metrics.snapshot();
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         snapshot.to_prometheus(),
     )
 }

@@ -20,7 +20,9 @@ impl BrowserState {
             .map(|v| v != "0" && v.to_lowercase() != "false")
             .unwrap_or(true);
         if !sandbox_enabled {
-            tracing::warn!("浏览器沙箱已禁用（HERMESS_BROWSER_SANDBOX=false），仅在 Docker 环境使用");
+            tracing::warn!(
+                "浏览器沙箱已禁用（HERMESS_BROWSER_SANDBOX=false），仅在 Docker 环境使用"
+            );
         }
         let opts = LaunchOptions::default_builder()
             .headless(true)
@@ -41,12 +43,9 @@ impl BrowserState {
 
     fn screenshot(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
-        let data = self.tab.capture_screenshot(
-            CaptureScreenshotFormatOption::Png,
-            None,
-            None,
-            true,
-        )?;
+        let data =
+            self.tab
+                .capture_screenshot(CaptureScreenshotFormatOption::Png, None, None, true)?;
         // 如果指定了路径，保存到文件
         if path != "-" {
             std::fs::write(path, &data)?;
@@ -126,14 +125,17 @@ impl Tool for BrowserNavigateTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let url = args["url"].as_str()
+        let url = args["url"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_navigate: 'url' is required"))?;
 
         let guard = self.ensure_browser()?;
         let state = guard.as_ref().unwrap();
         state.navigate(url)?;
         let title = state.tab.get_title()?;
-        Ok(ToolOutput::text(format!("Navigated to: {url}\nPage title: {title}")))
+        Ok(ToolOutput::text(format!(
+            "Navigated to: {url}\nPage title: {title}"
+        )))
     }
 }
 
@@ -144,7 +146,9 @@ pub struct BrowserScreenshotTool {
 
 impl BrowserScreenshotTool {
     pub fn new(browser_state: Arc<std::sync::Mutex<Option<BrowserState>>>) -> Self {
-        Self { state: browser_state }
+        Self {
+            state: browser_state,
+        }
     }
 }
 
@@ -171,13 +175,17 @@ impl Tool for BrowserScreenshotTool {
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
         let path = args["path"].as_str().unwrap_or("screenshot.png");
         let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("browser_screenshot: browser not launched. Use browser_navigate first."))?;
+        let state = guard.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("browser_screenshot: browser not launched. Use browser_navigate first.")
+        })?;
 
         let data = state.screenshot(path)?;
         Ok(ToolOutput {
             success: true,
-            content: format!("Screenshot saved to {path} ({:.1} KB)", data.len() as f64 / 1024.0),
+            content: format!(
+                "Screenshot saved to {path} ({:.1} KB)",
+                data.len() as f64 / 1024.0
+            ),
             metadata: serde_json::json!({"path": path, "size_bytes": data.len()}),
         })
     }
@@ -190,7 +198,9 @@ pub struct BrowserClickTool {
 
 impl BrowserClickTool {
     pub fn new(browser_state: Arc<std::sync::Mutex<Option<BrowserState>>>) -> Self {
-        Self { state: browser_state }
+        Self {
+            state: browser_state,
+        }
     }
 }
 
@@ -215,10 +225,12 @@ impl Tool for BrowserClickTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let selector = args["selector"].as_str()
+        let selector = args["selector"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_click: 'selector' is required"))?;
         let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_ref()
+        let state = guard
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_click: browser not launched."))?;
         state.click(selector)?;
         Ok(ToolOutput::text(format!("Clicked element: {selector}")))
@@ -232,7 +244,9 @@ pub struct BrowserFillTool {
 
 impl BrowserFillTool {
     pub fn new(browser_state: Arc<std::sync::Mutex<Option<BrowserState>>>) -> Self {
-        Self { state: browser_state }
+        Self {
+            state: browser_state,
+        }
     }
 }
 
@@ -258,12 +272,15 @@ impl Tool for BrowserFillTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let selector = args["selector"].as_str()
+        let selector = args["selector"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_fill: 'selector' is required"))?;
-        let value = args["value"].as_str()
+        let value = args["value"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_fill: 'value' is required"))?;
         let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_ref()
+        let state = guard
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_fill: browser not launched."))?;
         state.fill(selector, value)?;
         Ok(ToolOutput::text(format!("Filled {selector} with: {value}")))
@@ -277,7 +294,9 @@ pub struct BrowserExecuteTool {
 
 impl BrowserExecuteTool {
     pub fn new(browser_state: Arc<std::sync::Mutex<Option<BrowserState>>>) -> Self {
-        Self { state: browser_state }
+        Self {
+            state: browser_state,
+        }
     }
 }
 
@@ -302,10 +321,12 @@ impl Tool for BrowserExecuteTool {
     }
 
     async fn call(&self, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
-        let code = args["code"].as_str()
+        let code = args["code"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_execute: 'code' is required"))?;
         let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_ref()
+        let state = guard
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("browser_execute: browser not launched."))?;
         let result = state.execute_js(code)?;
         Ok(ToolOutput::text(result))
@@ -335,7 +356,10 @@ mod tests {
     fn test_schema_navigate() {
         let tool = BrowserNavigateTool::new(Duration::from_secs(30));
         let s = tool.schema();
-        assert!(s["required"].as_array().unwrap().contains(&serde_json::json!("url")));
+        assert!(s["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("url")));
     }
 
     #[test]
@@ -350,7 +374,13 @@ mod tests {
         let state = Arc::new(std::sync::Mutex::new(None));
         let tool = BrowserFillTool::new(state);
         let s = tool.schema();
-        assert!(s["required"].as_array().unwrap().contains(&serde_json::json!("selector")));
-        assert!(s["required"].as_array().unwrap().contains(&serde_json::json!("value")));
+        assert!(s["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("selector")));
+        assert!(s["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("value")));
     }
 }

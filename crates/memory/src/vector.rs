@@ -68,10 +68,17 @@ impl VectorMemory {
                         tracing::info!("Created Qdrant collection '{}'", cfg.collection);
                     }
                     Ok(r) => {
-                        tracing::warn!("Failed to create Qdrant collection '{}': HTTP {}", cfg.collection, r.status());
+                        tracing::warn!(
+                            "Failed to create Qdrant collection '{}': HTTP {}",
+                            cfg.collection,
+                            r.status()
+                        );
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to create Qdrant collection '{}': {e}", cfg.collection);
+                        tracing::warn!(
+                            "Failed to create Qdrant collection '{}': {e}",
+                            cfg.collection
+                        );
                     }
                 }
             }

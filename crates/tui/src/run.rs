@@ -113,11 +113,7 @@ fn submit_tui_input(state: &mut TuiAppState, tui_input: &TuiInput, text: String)
 }
 
 /// 将 context_ref 选中项插入到输入缓冲区，替换 @query 部分。
-fn insert_context_ref_text(
-    state: &mut TuiAppState,
-    tui_input: &TuiInput,
-    label: &str,
-) {
+fn insert_context_ref_text(state: &mut TuiAppState, tui_input: &TuiInput, label: &str) {
     let mut buffer = tui_input.buffer.lock();
     if let Some(at_pos) = buffer.rfind('@') {
         buffer.truncate(at_pos);
@@ -253,7 +249,9 @@ where
             }
 
             // 3. Check for input (~30fps)
-            if let Ok(true) = crossterm::event::poll(Duration::from_millis(crate::render::RENDER_POLL_MS)) {
+            if let Ok(true) =
+                crossterm::event::poll(Duration::from_millis(crate::render::RENDER_POLL_MS))
+            {
                 match crossterm::event::read() {
                     Ok(Event::Key(key)) => {
                         let mut state = app_state.write();
@@ -605,7 +603,9 @@ where
                                     // 外层循环继续等待真实提交；按两次 Esc 才会退出程序
                                     tui_input.buffer.lock().clear();
                                     *tui_input.cursor.lock() = 0;
-                                    tui_input.awaiting.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    tui_input
+                                        .awaiting
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
                                     state.awaiting_input = false;
                                     state.input_text.clear();
                                     state.input_cursor = 0;
@@ -619,10 +619,11 @@ where
                                     if state.context_ref_active
                                         && !state.context_ref_items.is_empty()
                                     {
-                                        let label = state.context_ref_items
-                                            [state.context_ref_selected.min(state.context_ref_items.len() - 1)]
-                                            .label
-                                            .clone();
+                                        let label = state.context_ref_items[state
+                                            .context_ref_selected
+                                            .min(state.context_ref_items.len() - 1)]
+                                        .label
+                                        .clone();
                                         insert_context_ref_text(&mut state, &tui_input, &label);
                                         continue;
                                     }
@@ -935,10 +936,11 @@ where
                                     if state.context_ref_active
                                         && !state.context_ref_items.is_empty()
                                     {
-                                        let label = state.context_ref_items
-                                            [state.context_ref_selected.min(state.context_ref_items.len() - 1)]
-                                            .label
-                                            .clone();
+                                        let label = state.context_ref_items[state
+                                            .context_ref_selected
+                                            .min(state.context_ref_items.len() - 1)]
+                                        .label
+                                        .clone();
                                         insert_context_ref_text(&mut state, &tui_input, &label);
                                         continue;
                                     }
@@ -1437,10 +1439,9 @@ where
                                     state.focused_panel = FocusedPanel::Input;
                                     if state.agent_done {
                                         // Start typing: activate input mode and insert char
-                                        tui_input.awaiting.store(
-                                            true,
-                                            std::sync::atomic::Ordering::Relaxed,
-                                        );
+                                        tui_input
+                                            .awaiting
+                                            .store(true, std::sync::atomic::Ordering::Relaxed);
                                         state.awaiting_input = true;
                                         let mut buf = tui_input.buffer.lock();
                                         buf.push(c);
@@ -1486,7 +1487,7 @@ where
                             }
                             _ => {}
                         }
-                    },
+                    }
                     Ok(Event::Resize(..)) => {
                         // Redraw on next frame with new dimensions
                     }
@@ -2600,7 +2601,12 @@ fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, c
 }
 
 /// Mouse click: determine which panel is under the cursor and focus it.
-fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, tui_input: &TuiInput, col: u16, row: u16) {
+fn click_focus(
+    app_state: &Arc<parking_lot::RwLock<TuiAppState>>,
+    tui_input: &TuiInput,
+    col: u16,
+    row: u16,
+) {
     let mut state = app_state.write();
     let term_size = crossterm::terminal::size().unwrap_or((80, 24));
 
@@ -3060,7 +3066,10 @@ mod tests {
     fn test_apply_delta_i16_min_no_panic() {
         // i16::MIN = -32768; unsigned_abs() = 32768
         // This would have panicked in debug before the fix using unsigned_abs()
-        assert_eq!(apply_delta(50000, i16::MIN), 50000_u16.saturating_sub(32768));
+        assert_eq!(
+            apply_delta(50000, i16::MIN),
+            50000_u16.saturating_sub(32768)
+        );
     }
 
     #[test]
@@ -3415,7 +3424,12 @@ mod tests {
             },
         );
         assert!(state.log_entries.len() > before);
-        assert!(state.log_entries.back().unwrap().message.contains("search docs"));
+        assert!(state
+            .log_entries
+            .back()
+            .unwrap()
+            .message
+            .contains("search docs"));
     }
 
     #[test]
@@ -3460,9 +3474,7 @@ mod tests {
         let mut state = make_state();
         handle_event(
             &mut state,
-            AgentEvent::ReplanComplete {
-                new_steps_count: 3,
-            },
+            AgentEvent::ReplanComplete { new_steps_count: 3 },
         );
         assert_eq!(state.plan_steps_count, 3);
         assert!(state.plan_ready);
@@ -4053,10 +4065,7 @@ mod tests {
             full_content: "overlay content".into(),
             scroll: 0,
         });
-        assert_eq!(
-            copy_focused_content(&state),
-            Some("overlay content".into())
-        );
+        assert_eq!(copy_focused_content(&state), Some("overlay content".into()));
     }
 
     #[test]
@@ -4832,7 +4841,7 @@ mod tests {
         state.focused_panel = FocusedPanel::MiniLog;
         state.search_match_lines = vec![1, 2, 3]; // len = 3
         state.search_current_match = Some(2); // last
-        // n key: cur + 1 >= len → wrap to 0
+                                              // n key: cur + 1 >= len → wrap to 0
         if let Some(cur) = state.search_current_match {
             let next = if cur + 1 < state.search_match_lines.len() {
                 cur + 1
@@ -4866,7 +4875,7 @@ mod tests {
         let mut state = make_state();
         state.search_match_lines = vec![1, 2, 3]; // len = 3
         state.search_current_match = Some(0); // first
-        // N key: cur == 0 → wrap to len - 1 = 2
+                                              // N key: cur == 0 → wrap to len - 1 = 2
         if let Some(cur) = state.search_current_match {
             let prev = if cur > 0 {
                 cur - 1
@@ -4911,7 +4920,7 @@ mod tests {
             state.search_current_match = Some(next);
         }
         assert_eq!(state.search_current_match, Some(0)); // wraps to 0 = same
-        // N from position 0
+                                                         // N from position 0
         state.search_current_match = Some(0);
         if let Some(cur) = state.search_current_match {
             let prev = if cur > 0 {
@@ -4941,12 +4950,7 @@ mod tests {
             push_log(&mut state, "取消当前操作...".into(), false);
         }
         assert!(stop_flag.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(state
-            .log_entries
-            .back()
-            .unwrap()
-            .message
-            .contains("取消"));
+        assert!(state.log_entries.back().unwrap().message.contains("取消"));
     }
 
     #[test]
@@ -5084,10 +5088,7 @@ mod tests {
     #[test]
     fn test_plan_ready_sets_steps_and_flag() {
         let mut state = make_state();
-        handle_event(
-            &mut state,
-            AgentEvent::PlanReady { steps_count: 5 },
-        );
+        handle_event(&mut state, AgentEvent::PlanReady { steps_count: 5 });
         assert_eq!(state.plan_steps_count, 5);
         assert!(state.plan_ready);
     }
@@ -5139,12 +5140,7 @@ mod tests {
             },
         );
         assert!(state.log_entries.len() > before);
-        assert!(state
-            .log_entries
-            .back()
-            .unwrap()
-            .message
-            .contains("0.85"));
+        assert!(state.log_entries.back().unwrap().message.contains("0.85"));
     }
 
     #[test]
@@ -5218,7 +5214,11 @@ mod tests {
                 status: agent_core::TaskStatus::InProgress,
             },
         );
-        let item = state.kanban_items.iter().find(|i| i.id == "task-1").unwrap();
+        let item = state
+            .kanban_items
+            .iter()
+            .find(|i| i.id == "task-1")
+            .unwrap();
         assert_eq!(item.title, "new title");
         assert_eq!(item.status, crate::state::KanbanStatus::InProgress);
     }
@@ -5424,7 +5424,10 @@ mod tests {
         let popup = state.slash_command_popup.unwrap();
         // In a non-git dir, should show an error message
         assert!(
-            popup.lines.iter().any(|l| l.contains("git 仓库") || l.contains("无变更") || l.contains("错误")),
+            popup
+                .lines
+                .iter()
+                .any(|l| l.contains("git 仓库") || l.contains("无变更") || l.contains("错误")),
             "expected error/empty message in popup, got: {:?}",
             popup.lines
         );
@@ -5738,7 +5741,10 @@ mod tests {
         let state = make_state();
         // export_to_file should return Some with filename + content
         let result = export_to_file(&state);
-        assert!(result.is_some(), "should produce export even with empty state");
+        assert!(
+            result.is_some(),
+            "should produce export even with empty state"
+        );
         let (filename, content) = result.unwrap();
         assert!(filename.ends_with(".md") || filename.contains("hermess"));
         assert!(!content.is_empty());
@@ -5775,8 +5781,12 @@ mod tests {
     fn test_session_tabs_height_two_tabs() {
         let mut state = make_state();
         state.session_tabs = vec![
-            crate::state::SessionTab { name: "tab1".into() },
-            crate::state::SessionTab { name: "tab2".into() },
+            crate::state::SessionTab {
+                name: "tab1".into(),
+            },
+            crate::state::SessionTab {
+                name: "tab2".into(),
+            },
         ];
         let h = session_tabs_height_for(&state);
         assert_eq!(h, 1, "two tabs → height 1");
@@ -5787,7 +5797,12 @@ mod tests {
     #[test]
     fn test_agent_started_updates_agent_name() {
         let mut state = make_state();
-        handle_event(&mut state, AgentEvent::AgentStarted { name: "NewAgent".into() });
+        handle_event(
+            &mut state,
+            AgentEvent::AgentStarted {
+                name: "NewAgent".into(),
+            },
+        );
         assert_eq!(state.agent_name, "NewAgent");
     }
 
@@ -5797,8 +5812,18 @@ mod tests {
     fn test_plan_streaming_token_appends_to_buffer() {
         let mut state = make_state();
         handle_event(&mut state, AgentEvent::PlanPhaseStarted);
-        handle_event(&mut state, AgentEvent::PlanStreamingToken { token: "hello ".into() });
-        handle_event(&mut state, AgentEvent::PlanStreamingToken { token: "world".into() });
+        handle_event(
+            &mut state,
+            AgentEvent::PlanStreamingToken {
+                token: "hello ".into(),
+            },
+        );
+        handle_event(
+            &mut state,
+            AgentEvent::PlanStreamingToken {
+                token: "world".into(),
+            },
+        );
         assert!(state.streaming_buffer.contains("hello"));
         assert!(state.streaming_buffer.contains("world"));
     }
@@ -5960,7 +5985,9 @@ mod tests {
         let mut state = make_state();
         let tui_input = TuiInput::new();
         begin_next_task_input(&mut state, &tui_input);
-        assert!(tui_input.awaiting.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(tui_input
+            .awaiting
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -6155,7 +6182,12 @@ mod tests {
     #[test]
     fn test_summary_ready_adds_log_entry() {
         let mut state = make_state();
-        handle_event(&mut state, AgentEvent::SummaryReady { summary: "任务完成".into() });
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryReady {
+                summary: "任务完成".into(),
+            },
+        );
         assert!(!state.log_entries.is_empty());
         let last = state.log_entries.back().unwrap();
         assert!(last.message.contains("任务完成"));
@@ -6164,7 +6196,12 @@ mod tests {
     #[test]
     fn test_summary_ready_sets_summary_field() {
         let mut state = make_state();
-        handle_event(&mut state, AgentEvent::SummaryReady { summary: "done".into() });
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryReady {
+                summary: "done".into(),
+            },
+        );
         assert_eq!(state.summary.as_deref(), Some("done"));
     }
 
@@ -6311,7 +6348,11 @@ mod tests {
         dispatch_slash_command(&mut state, "/nonexistent-command");
         // Falls through to _ arm which calls push_log with "未知命令"
         assert!(
-            state.log_entries.back().map(|e| e.message.contains("未知命令")).unwrap_or(false),
+            state
+                .log_entries
+                .back()
+                .map(|e| e.message.contains("未知命令"))
+                .unwrap_or(false),
             "Expected 未知命令 in log"
         );
     }
@@ -6339,7 +6380,10 @@ mod tests {
     #[test]
     fn test_execute_phase_started_sets_total_steps() {
         let mut state = make_state();
-        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 5 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 5 },
+        );
         assert_eq!(state.exec_total_steps, 5);
         assert_eq!(state.phase, AgentPhase::Executing);
     }
@@ -6348,7 +6392,10 @@ mod tests {
     fn test_execute_phase_started_resets_completed_steps() {
         let mut state = make_state();
         state.exec_completed_steps = 99;
-        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 3 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 3 },
+        );
         assert_eq!(state.exec_completed_steps, 0);
     }
 
@@ -6402,7 +6449,10 @@ mod tests {
             },
         );
         assert!(
-            state.log_entries.iter().any(|e| e.is_error && e.message.contains("connection failed")),
+            state
+                .log_entries
+                .iter()
+                .any(|e| e.is_error && e.message.contains("connection failed")),
             "should have an error log entry"
         );
     }
@@ -6423,7 +6473,11 @@ mod tests {
         // Should add a log entry about session reset
         assert!(state.log_entries.len() > before_len);
         assert!(
-            state.log_entries.back().map(|e| e.message.contains("重置")).unwrap_or(false),
+            state
+                .log_entries
+                .back()
+                .map(|e| e.message.contains("重置"))
+                .unwrap_or(false),
             "expected 重置 in log"
         );
     }
@@ -6435,7 +6489,10 @@ mod tests {
         assert_eq!(state.phase, AgentPhase::Observing);
         handle_event(&mut state, AgentEvent::PlanPhaseStarted);
         assert_eq!(state.phase, AgentPhase::Planning);
-        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 2 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 2 },
+        );
         assert_eq!(state.phase, AgentPhase::Executing);
         handle_event(&mut state, AgentEvent::ReflectPhaseStarted);
         assert_eq!(state.phase, AgentPhase::Reflecting);
@@ -6479,7 +6536,10 @@ mod tests {
         dispatch_slash_command(&mut state, "/memory");
         assert!(state.slash_command_popup.is_some());
         let popup = state.slash_command_popup.unwrap();
-        assert!(popup.lines.iter().any(|l| l.contains("用法") || l.contains("memory")));
+        assert!(popup
+            .lines
+            .iter()
+            .any(|l| l.contains("用法") || l.contains("memory")));
     }
 
     #[test]
@@ -6489,7 +6549,10 @@ mod tests {
         assert!(state.slash_command_popup.is_some());
         let popup = state.slash_command_popup.unwrap();
         assert_eq!(popup.title, "Personality");
-        assert!(popup.lines.iter().any(|l| l.contains("concise") || l.contains("verbose")));
+        assert!(popup
+            .lines
+            .iter()
+            .any(|l| l.contains("concise") || l.contains("verbose")));
     }
 
     #[test]
@@ -6572,7 +6635,10 @@ mod tests {
     #[test]
     fn test_step_started_increments_exec_count() {
         let mut state = make_state();
-        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 3 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 3 },
+        );
         handle_event(
             &mut state,
             AgentEvent::StepStarted {
@@ -6672,7 +6738,10 @@ mod tests {
     fn test_execute_phase_started_sets_left_tab_to_execution() {
         let mut state = make_state();
         state.left_tab = crate::state::LeftTab::Plan;
-        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 1 });
+        handle_event(
+            &mut state,
+            AgentEvent::ExecutePhaseStarted { total_steps: 1 },
+        );
         assert_eq!(state.left_tab, crate::state::LeftTab::Execution);
     }
 
@@ -6686,7 +6755,9 @@ mod tests {
         for _ in 0..600 {
             handle_event(
                 &mut state,
-                AgentEvent::PlanStreamingToken { token: big_token.clone() },
+                AgentEvent::PlanStreamingToken {
+                    token: big_token.clone(),
+                },
             );
         }
         // Buffer should be capped — well under 60*101=60600 bytes
@@ -6704,7 +6775,9 @@ mod tests {
         for _ in 0..600 {
             handle_event(
                 &mut state,
-                AgentEvent::SummaryStreamingToken { token: big_token.clone() },
+                AgentEvent::SummaryStreamingToken {
+                    token: big_token.clone(),
+                },
             );
         }
         assert!(
@@ -6730,8 +6803,18 @@ mod tests {
     fn test_summary_streaming_token_appends() {
         let mut state = make_state();
         state.summary_streaming_buffer.clear();
-        handle_event(&mut state, AgentEvent::SummaryStreamingToken { token: "part1".into() });
-        handle_event(&mut state, AgentEvent::SummaryStreamingToken { token: " part2".into() });
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryStreamingToken {
+                token: "part1".into(),
+            },
+        );
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryStreamingToken {
+                token: " part2".into(),
+            },
+        );
         assert!(state.summary_streaming_buffer.contains("part1"));
         assert!(state.summary_streaming_buffer.contains("part2"));
     }

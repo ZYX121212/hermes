@@ -14,9 +14,15 @@ pub enum McpTransport {
     /// 启动子进程，通过 stdin/stdout 通信
     Stdio { command: String, args: Vec<String> },
     /// HTTP endpoint（POST JSON-RPC）
-    Http { url: String, api_key: Option<String> },
+    Http {
+        url: String,
+        api_key: Option<String>,
+    },
     /// SSE endpoint
-    Sse { url: String, api_key: Option<String> },
+    Sse {
+        url: String,
+        api_key: Option<String>,
+    },
 }
 
 /// MCP 客户端：连接 MCP 服务器并提供工具发现/调用。
@@ -40,7 +46,9 @@ impl McpClient {
     }
 
     fn next_id(&self) -> serde_json::Value {
-        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         serde_json::Value::Number(id.into())
     }
 
@@ -124,9 +132,7 @@ impl McpClient {
             McpTransport::Http { .. } | McpTransport::Sse { .. } => {
                 self.http_call(METHOD_INITIALIZE, params).await?
             }
-            McpTransport::Stdio { .. } => {
-                self.stdio_call(METHOD_INITIALIZE, params).await?
-            }
+            McpTransport::Stdio { .. } => self.stdio_call(METHOD_INITIALIZE, params).await?,
         };
 
         let mut info = self.server_info.lock().await;
@@ -139,15 +145,17 @@ impl McpClient {
     pub async fn list_tools(&self) -> anyhow::Result<Vec<ToolDef>> {
         let result = match &self.transport {
             McpTransport::Http { .. } | McpTransport::Sse { .. } => {
-                self.http_call(METHOD_TOOLS_LIST, serde_json::json!({})).await?
+                self.http_call(METHOD_TOOLS_LIST, serde_json::json!({}))
+                    .await?
             }
             McpTransport::Stdio { .. } => {
-                self.stdio_call(METHOD_TOOLS_LIST, serde_json::json!({})).await?
+                self.stdio_call(METHOD_TOOLS_LIST, serde_json::json!({}))
+                    .await?
             }
         };
 
-        let tools: Vec<ToolDef> = serde_json::from_value(result["result"]["tools"].clone())
-            .unwrap_or_default();
+        let tools: Vec<ToolDef> =
+            serde_json::from_value(result["result"]["tools"].clone()).unwrap_or_default();
         Ok(tools)
     }
 
@@ -166,13 +174,10 @@ impl McpClient {
             McpTransport::Http { .. } | McpTransport::Sse { .. } => {
                 self.http_call(METHOD_TOOLS_CALL, params).await?
             }
-            McpTransport::Stdio { .. } => {
-                self.stdio_call(METHOD_TOOLS_CALL, params).await?
-            }
+            McpTransport::Stdio { .. } => self.stdio_call(METHOD_TOOLS_CALL, params).await?,
         };
 
-        let call_result: ToolCallResult =
-            serde_json::from_value(result["result"].clone())?;
+        let call_result: ToolCallResult = serde_json::from_value(result["result"].clone())?;
         Ok(call_result)
     }
 

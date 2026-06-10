@@ -1,6 +1,6 @@
 [package]
 name = "hermess-web"
-version = "0.1.0"
+version = "1.0.0"
 description = "HTTP daemon with Feishu bot integration and general chat API"
 license = "MIT"
 edition = "2021"

@@ -13,8 +13,8 @@ pub mod toolset;
 pub mod vision;
 
 pub use browser::{
-    browser_toolset, BrowserClickTool, BrowserExecuteTool, BrowserFillTool,
-    BrowserNavigateTool, BrowserScreenshotTool,
+    browser_toolset, BrowserClickTool, BrowserExecuteTool, BrowserFillTool, BrowserNavigateTool,
+    BrowserScreenshotTool,
 };
 pub use builtin::{
     ApprovalPolicy, ApprovalResult, BashTool, ConfirmationPolicy, DangerGuard, ReadFileTool,

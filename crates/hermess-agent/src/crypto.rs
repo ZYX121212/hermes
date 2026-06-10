@@ -212,7 +212,10 @@ mod tests {
         };
         let e1 = vault.encrypt(b"same data").unwrap();
         let e2 = vault.encrypt(b"same data").unwrap();
-        assert_ne!(e1, e2, "Same plaintext should produce different ciphertexts");
+        assert_ne!(
+            e1, e2,
+            "Same plaintext should produce different ciphertexts"
+        );
     }
 
     #[test]

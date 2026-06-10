@@ -28,8 +28,8 @@ pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
             mw = MIN_WIDTH,
             mh = MIN_HEIGHT,
         );
-        let para = Paragraph::new(msg.as_str())
-            .style(Style::default().fg(theme::RED).bg(theme::BG));
+        let para =
+            Paragraph::new(msg.as_str()).style(Style::default().fg(theme::RED).bg(theme::BG));
         frame.render_widget(para, area);
         return;
     }

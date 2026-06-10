@@ -41,14 +41,9 @@ pub enum MessageKind {
         mime: Option<String>,
     },
     /// 命令消息（如 /start, /help）
-    Command {
-        command: String,
-        args: String,
-    },
+    Command { command: String, args: String },
     /// 按钮回调
-    Button {
-        callback_data: String,
-    },
+    Button { callback_data: String },
     /// 语音消息
     Voice {
         url: String,

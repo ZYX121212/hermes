@@ -2,9 +2,9 @@
 // Token bucket rate limiter for API Gateway.
 // Supports per-user and global rate limits, sliding window counters.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::Instant;
-use parking_lot::Mutex;
 
 /// Token bucket rate limiter. Tokens refill at a constant rate up to a maximum
 /// burst size. Each request consumes one token.
@@ -158,11 +158,7 @@ impl RateLimiter {
 
     /// Set rate limit for a specific user.
     pub fn set_user_tier(&self, user_id: &str, tier: &str) {
-        let config = self
-            .configs
-            .get(tier)
-            .cloned()
-            .unwrap_or_default();
+        let config = self.configs.get(tier).cloned().unwrap_or_default();
         let mut users = self.users.lock();
         users.insert(
             user_id.to_string(),
@@ -202,7 +198,13 @@ impl RateLimiter {
         });
 
         // Check concurrent
-        if user.concurrent >= self.configs.get("default").map(|c| c.max_concurrent).unwrap_or(10) {
+        if user.concurrent
+            >= self
+                .configs
+                .get("default")
+                .map(|c| c.max_concurrent)
+                .unwrap_or(10)
+        {
             return RateLimitResult {
                 allowed: false,
                 remaining_rpm: user.minute_bucket.tokens as u32,
@@ -335,10 +337,9 @@ impl ApiKeyManager {
 
     /// Register an API key for a user at a specific tier.
     pub fn register(&self, api_key: &str, user_id: &str, tier: &str) {
-        self.keys.lock().insert(
-            api_key.to_string(),
-            (user_id.to_string(), tier.to_string()),
-        );
+        self.keys
+            .lock()
+            .insert(api_key.to_string(), (user_id.to_string(), tier.to_string()));
     }
 
     /// Look up a user by API key. Returns (user_id, tier).

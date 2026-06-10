@@ -105,6 +105,7 @@ mod tests {
     fn test_is_table_header() {
         assert!(is_table_header("| A | B |"));
         assert!(!is_table_header("plain text"));
+        // | not a table — only 1 pipe pair (start + end) but no internal pipes
         assert!(!is_table_header("| not a table"));
     }
 
@@ -112,6 +113,7 @@ mod tests {
     fn test_is_table_separator() {
         assert!(is_table_separator("| --- | --- |"));
         assert!(is_table_separator("| :--- | ---: |"));
+        assert!(!is_table_separator("| A | B |"));
     }
 
     #[test]
@@ -119,5 +121,94 @@ mod tests {
         let cells = split_row("| a | b | c |").unwrap();
         assert_eq!(cells, vec!["a", "b", "c"]);
         assert!(split_row("not a row").is_none());
+    }
+
+    #[test]
+    fn test_split_row_empty_cell() {
+        let cells = split_row("| a |  | c |").unwrap();
+        assert_eq!(cells, vec!["a", "", "c"]);
+    }
+
+    #[test]
+    fn test_split_row_single_cell() {
+        let cells = split_row("| single |").unwrap();
+        assert_eq!(cells, vec!["single"]);
+    }
+
+    #[test]
+    fn test_split_row_no_leading_pipe() {
+        assert!(split_row("a | b |").is_none());
+    }
+
+    #[test]
+    fn test_split_row_no_trailing_pipe() {
+        assert!(split_row("| a | b").is_none());
+    }
+
+    #[test]
+    fn test_split_row_whitespace_trimmed() {
+        let cells = split_row("|  hello  |  world  |").unwrap();
+        assert_eq!(cells, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_parse_markdown_table_valid() {
+        let input = vec!["| A | B |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"];
+        // Table struct is private in ratatui, just verify Some is returned
+        assert!(parse_markdown_table(&input).is_some());
+    }
+
+    #[test]
+    fn test_parse_markdown_table_too_short() {
+        assert!(parse_markdown_table(&["| A |"]).is_none());
+        assert!(parse_markdown_table(&[]).is_none());
+    }
+
+    #[test]
+    fn test_parse_markdown_table_bad_separator() {
+        let input = vec!["| A | B |", "| x | y |"];
+        assert!(parse_markdown_table(&input).is_none());
+    }
+
+    #[test]
+    fn test_split_row_empty_inner() {
+        // "||" → inner is "" → split gives [""] → not empty → Ok(vec![""])
+        let cells = split_row("||").unwrap();
+        assert_eq!(cells, vec![""]);
+    }
+
+    // ── Edge cases ──
+
+    #[test]
+    fn test_is_table_header_empty_string() {
+        assert!(!is_table_header(""));
+    }
+
+    #[test]
+    fn test_is_table_separator_empty_string() {
+        assert!(!is_table_separator(""));
+    }
+
+    #[test]
+    fn test_parse_table_alignment_colons() {
+        let input = vec!["| A | B | C |", "| :--- | ---: | :---: |", "| 1 | 2 | 3 |"];
+        assert!(parse_markdown_table(&input).is_some());
+    }
+
+    #[test]
+    fn test_parse_table_three_columns() {
+        let input = vec![
+            "| Col A | Col B | Col C |",
+            "| --- | --- | --- |",
+            "| 1 | 2 | 3 |",
+            "| 4 | 5 | 6 |",
+        ];
+        assert!(parse_markdown_table(&input).is_some());
+    }
+
+    #[test]
+    fn test_parse_table_no_data_rows() {
+        let input = vec!["| H1 | H2 |", "| --- | --- |"];
+        assert!(parse_markdown_table(&input).is_some());
     }
 }

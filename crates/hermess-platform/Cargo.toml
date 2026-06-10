@@ -1,6 +1,6 @@
 [package]
 name = "hermess-platform"
-version = "0.1.0"
+version = "1.0.0"
 description = "Unified multi-platform adapter layer for Hermes Agent"
 license = "MIT"
 edition = "2021"

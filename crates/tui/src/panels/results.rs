@@ -247,3 +247,76 @@ fn step_preview_lines(step: &StepExecState) -> Option<Vec<String>> {
         Some(lines)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{StepExecState, StepStatus};
+
+    fn make_step(content_full: Option<&str>, content_preview: Option<&str>) -> StepExecState {
+        StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: StepStatus::Success,
+            content_preview: content_preview.map(|s| s.to_string()),
+            content_full: content_full.map(|s| s.to_string()),
+            duration_ms: Some(100),
+            layer: 0,
+        }
+    }
+
+    #[test]
+    fn test_step_preview_from_full_content() {
+        let step = make_step(Some("hello\nworld\n"), None);
+        let lines = step_preview_lines(&step).unwrap();
+        assert_eq!(lines, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_step_preview_from_preview_fallback() {
+        let step = make_step(None, Some("preview text"));
+        let lines = step_preview_lines(&step).unwrap();
+        assert_eq!(lines, vec!["preview text"]);
+    }
+
+    #[test]
+    fn test_step_preview_empty_content() {
+        let step = make_step(Some(""), None);
+        assert!(step_preview_lines(&step).is_none());
+    }
+
+    #[test]
+    fn test_step_preview_no_content() {
+        let step = make_step(None, None);
+        assert!(step_preview_lines(&step).is_none());
+    }
+
+    #[test]
+    fn test_step_preview_whitespace_only() {
+        let step = make_step(Some("   \n  \n"), None);
+        // trim() on the joined content results in empty
+        assert!(step_preview_lines(&step).is_none());
+    }
+
+    #[test]
+    fn test_step_preview_json_pretty() {
+        let step = make_step(Some(r#"{"key":"value","num":1}"#), None);
+        let lines = step_preview_lines(&step).unwrap();
+        // JSON should be pretty-printed
+        let joined = lines.join("\n");
+        assert!(joined.contains("key"), "should contain key: {joined}");
+        assert!(joined.contains("value"), "should contain value: {joined}");
+    }
+
+    #[test]
+    fn test_step_preview_long_output_truncated() {
+        let long = (1..=15)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let step = make_step(Some(&long), None);
+        let lines = step_preview_lines(&step).unwrap();
+        assert_eq!(lines.len(), 11); // 10 + truncation hint
+        assert!(lines.last().unwrap().contains("Enter"));
+    }
+}
