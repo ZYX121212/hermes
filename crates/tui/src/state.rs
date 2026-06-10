@@ -329,6 +329,7 @@ pub struct TuiAppState {
     pub kanban_visible: bool,
     pub kanban_items: Vec<KanbanItem>,
     pub help_visible: bool,
+    pub help_scroll: u16,
     pub settings_visible: bool,
 
     // Token usage tracker (shared with agent)
@@ -436,6 +437,7 @@ impl TuiAppState {
             kanban_visible: false,
             kanban_items: Vec::new(),
             help_visible: false,
+            help_scroll: 0,
             settings_visible: false,
             input_history: VecDeque::with_capacity(50),
             input_history_pos: None,
@@ -825,6 +827,26 @@ mod tests {
     // ── TuiAppState initial values ──
 
     #[test]
+    fn test_split_pct_uses_override_when_set() {
+        let evo = Arc::new(evolution::EvolutionEngine::new(
+            0.01,
+            Arc::new(memory::MockMemoryStore::default()),
+        ));
+        let mut state = TuiAppState::new("test".into(), evo);
+        state.phase = AgentPhase::Idle;
+        // No override: uses phase default
+        let default = state.split_pct();
+        // Set override
+        state.left_split_pct = Some(80);
+        let (l, r) = state.split_pct();
+        assert_eq!((l, r), (80, 20));
+        // Remove override
+        state.left_split_pct = None;
+        let restored = state.split_pct();
+        assert_eq!(restored, default);
+    }
+
+    #[test]
     fn test_initial_state_defaults() {
         let evo = Arc::new(evolution::EvolutionEngine::new(
             0.01,
@@ -907,5 +929,137 @@ mod tests {
             end < 10000,
             "end should have stepped back from 10000 boundary"
         );
+    }
+
+    // ── TuiInput get/set gateway_mode ──
+
+    #[test]
+    fn test_gateway_mode_default_empty() {
+        let input = TuiInput::new();
+        assert_eq!(input.get_gateway_mode(), "");
+    }
+
+    #[test]
+    fn test_gateway_mode_set_without_shared_is_noop() {
+        let input = TuiInput::new();
+        // gateway_mode is None by default, set_gateway_mode should not panic
+        input.set_gateway_mode("cost");
+        assert_eq!(input.get_gateway_mode(), "");
+    }
+
+    #[test]
+    fn test_gateway_mode_set_and_get() {
+        let mut input = TuiInput::new();
+        let shared = Arc::new(parking_lot::Mutex::new(None::<String>));
+        input.gateway_mode = Some(Arc::clone(&shared));
+        input.set_gateway_mode("cost");
+        assert_eq!(input.get_gateway_mode(), "cost");
+        input.set_gateway_mode("latency");
+        assert_eq!(input.get_gateway_mode(), "latency");
+    }
+
+    // ── clamp_scroll ──
+
+    #[test]
+    fn test_clamp_scroll_within_bounds() {
+        assert_eq!(clamp_scroll(3, 10, 5), 3);
+    }
+
+    #[test]
+    fn test_clamp_scroll_at_max() {
+        // max = 10 - 5 = 5, clamped to 10_000 → 5
+        assert_eq!(clamp_scroll(10, 10, 5), 5);
+    }
+
+    #[test]
+    fn test_clamp_scroll_zero_content() {
+        assert_eq!(clamp_scroll(0, 0, 5), 0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_viewport_larger_than_content() {
+        // content_lines < viewport → max = 0
+        assert_eq!(clamp_scroll(5, 3, 10), 0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_huge_scroll_capped_at_10k() {
+        // max = 15_000 - 5 = 14_995, clamped to 10_000
+        assert_eq!(clamp_scroll(12_000, 15_000, 5), 10_000);
+    }
+
+    // ── render_scrollbar ──
+
+    #[test]
+    fn test_render_scrollbar_no_scrollbar_when_content_fits() {
+        assert_eq!(render_scrollbar(0, 5, 10), "");
+    }
+
+    #[test]
+    fn test_render_scrollbar_basic() {
+        let bar = render_scrollbar(0, 30, 10);
+        assert_eq!(bar.chars().count(), 10);
+        assert!(bar.contains('█'), "should have a thumb");
+    }
+
+    #[test]
+    fn test_render_scrollbar_thumb_moves() {
+        let bar_top = render_scrollbar(0, 30, 10);
+        let bar_bottom = render_scrollbar(20, 30, 10);
+        // Thumb positions should differ
+        assert_ne!(bar_top, bar_bottom);
+    }
+
+    #[test]
+    fn test_render_scrollbar_zero_viewport() {
+        // viewport 0 → clamp to 1 → content 30 <= 1? no → scrollbar rendered
+        let bar = render_scrollbar(0, 30, 0);
+        assert!(!bar.is_empty());
+    }
+
+    // ── SettingsTab ──
+
+    #[test]
+    fn test_settings_tab_next_full_cycle() {
+        use SettingsTab::*;
+        assert_eq!(Llm.next(), Search);
+        assert_eq!(Search.next(), Finance);
+        assert_eq!(Finance.next(), Feishu);
+        assert_eq!(Feishu.next(), Theme);
+        assert_eq!(Theme.next(), Llm);
+    }
+
+    #[test]
+    fn test_settings_tab_prev_full_cycle() {
+        use SettingsTab::*;
+        assert_eq!(Llm.prev(), Theme);
+        assert_eq!(Theme.prev(), Feishu);
+        assert_eq!(Feishu.prev(), Finance);
+        assert_eq!(Finance.prev(), Search);
+        assert_eq!(Search.prev(), Llm);
+    }
+
+    #[test]
+    fn test_settings_tab_label_all() {
+        use SettingsTab::*;
+        assert_eq!(Llm.label(), "LLM");
+        assert_eq!(Search.label(), "搜索");
+        assert_eq!(Finance.label(), "金融");
+        assert_eq!(Theme.label(), "主题");
+        assert_eq!(Feishu.label(), "飞书");
+    }
+
+    // ── LogFilter ──
+
+    #[test]
+    fn test_log_filter_next_toggles() {
+        assert_eq!(LogFilter::All.next(), LogFilter::ErrorsOnly);
+        assert_eq!(LogFilter::ErrorsOnly.next(), LogFilter::All);
+    }
+
+    #[test]
+    fn test_log_filter_label() {
+        assert_eq!(LogFilter::All.label(), "All");
+        assert_eq!(LogFilter::ErrorsOnly.label(), "Errors");
     }
 }

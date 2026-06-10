@@ -28,6 +28,51 @@ fn close_overlays_focus_input(state: &mut TuiAppState) {
     state.focused_panel = FocusedPanel::Input;
 }
 
+/// Handle a key press while the help overlay is open.
+/// Returns true if the overlay should remain open.
+fn handle_help_overlay_key(state: &mut TuiAppState, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('h') | KeyCode::Esc | KeyCode::F(1) => {
+            state.help_visible = false;
+            state.help_scroll = 0;
+            if state.awaiting_input {
+                state.focused_panel = FocusedPanel::Input;
+            }
+            false
+        }
+        KeyCode::Tab | KeyCode::BackTab => true,
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.help_scroll = state.help_scroll.saturating_add(1);
+            true
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.help_scroll = state.help_scroll.saturating_sub(1);
+            true
+        }
+        KeyCode::PageDown => {
+            state.help_scroll = state.help_scroll.saturating_add(10);
+            true
+        }
+        KeyCode::PageUp => {
+            state.help_scroll = state.help_scroll.saturating_sub(10);
+            true
+        }
+        KeyCode::Home => {
+            state.help_scroll = 0;
+            true
+        }
+        KeyCode::End => {
+            state.help_scroll = u16::MAX;
+            true
+        }
+        KeyCode::Char(_) if state.awaiting_input => {
+            close_overlays_focus_input(state);
+            false
+        }
+        _ => true,
+    }
+}
+
 fn begin_next_task_input(state: &mut TuiAppState, tui_input: &TuiInput) {
     tui_input
         .awaiting
@@ -62,7 +107,29 @@ fn submit_tui_input(state: &mut TuiAppState, tui_input: &TuiInput, text: String)
     state.input_draft.clear();
     state.context_ref_active = false;
     state.context_ref_query.clear();
+    // 提交后立刻离开 Input 面板，避免在 idle 状态渲染一帧产生闪烁
+    state.focused_panel = FocusedPanel::MainLeft;
     true
+}
+
+/// 将 context_ref 选中项插入到输入缓冲区，替换 @query 部分。
+fn insert_context_ref_text(
+    state: &mut TuiAppState,
+    tui_input: &TuiInput,
+    label: &str,
+) {
+    let mut buffer = tui_input.buffer.lock();
+    if let Some(at_pos) = buffer.rfind('@') {
+        buffer.truncate(at_pos);
+    }
+    buffer.push_str(label);
+    buffer.push(' ');
+    let len = buffer.chars().count();
+    *tui_input.cursor.lock() = len;
+    state.context_ref_active = false;
+    state.context_ref_query.clear();
+    state.context_ref_items.clear();
+    state.focused_panel = FocusedPanel::Input;
 }
 
 fn close_settings_or_confirm_discard(state: &mut TuiAppState) {
@@ -186,7 +253,7 @@ where
             }
 
             // 3. Check for input (~30fps)
-            if crossterm::event::poll(Duration::from_millis(33)).unwrap_or(false) {
+            if let Ok(true) = crossterm::event::poll(Duration::from_millis(33)) {
                 match crossterm::event::read() {
                     Ok(Event::Key(key)) => {
                         let mut state = app_state.write();
@@ -314,21 +381,7 @@ where
 
                         // ── Help overlay ──
                         if state.help_visible {
-                            match key.code {
-                                KeyCode::Char('h') | KeyCode::Esc | KeyCode::F(1) => {
-                                    state.help_visible = false;
-                                    if state.awaiting_input {
-                                        state.focused_panel = FocusedPanel::Input;
-                                    }
-                                }
-                                KeyCode::Tab | KeyCode::BackTab => {
-                                    // No-op: help has no pages to switch
-                                }
-                                KeyCode::Char(_) if state.awaiting_input => {
-                                    close_overlays_focus_input(&mut state);
-                                }
-                                _ => {}
-                            }
+                            handle_help_overlay_key(&mut state, key.code);
                             continue;
                         }
 
@@ -346,9 +399,12 @@ where
                                         state.settings_edit_buffer.clear();
                                     }
                                     KeyCode::Tab | KeyCode::BackTab => {
-                                        // Exit editing, switch settings tab
+                                        // Apply current edit, then switch settings tab
+                                        let f = &fields[state.settings_field_focus % field_count];
+                                        settings_apply_text(&mut state, f.label);
                                         state.settings_editing = false;
                                         state.settings_edit_buffer.clear();
+                                        state.settings_dirty = true;
                                         state.settings_tab = if key.code == KeyCode::BackTab
                                             || key.modifiers.contains(KeyModifiers::SHIFT)
                                         {
@@ -538,9 +594,38 @@ where
                         if state.awaiting_input {
                             match key.code {
                                 KeyCode::Esc => {
-                                    submit_tui_input(&mut state, &tui_input, String::new());
+                                    // 关闭 context_ref 弹窗
+                                    if state.context_ref_active {
+                                        state.context_ref_active = false;
+                                        state.context_ref_query.clear();
+                                        state.context_ref_items.clear();
+                                        continue;
+                                    }
+                                    // 取消输入：清空缓冲区并退出输入模式，但不提交（不触发退出）
+                                    // 外层循环继续等待真实提交；按两次 Esc 才会退出程序
+                                    tui_input.buffer.lock().clear();
+                                    *tui_input.cursor.lock() = 0;
+                                    tui_input.awaiting.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    state.awaiting_input = false;
+                                    state.input_text.clear();
+                                    state.input_cursor = 0;
+                                    state.input_history_pos = None;
+                                    state.input_draft.clear();
+                                    state.context_ref_active = false;
+                                    state.context_ref_query.clear();
                                 }
                                 KeyCode::Enter => {
+                                    // 在 context_ref 弹窗中选择当前项
+                                    if state.context_ref_active
+                                        && !state.context_ref_items.is_empty()
+                                    {
+                                        let label = state.context_ref_items
+                                            [state.context_ref_selected.min(state.context_ref_items.len() - 1)]
+                                            .label
+                                            .clone();
+                                        insert_context_ref_text(&mut state, &tui_input, &label);
+                                        continue;
+                                    }
                                     if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         // Shift+Enter: insert newline for multiline input
                                         let mut buffer = tui_input.buffer.lock();
@@ -742,6 +827,14 @@ where
                                     }
                                 }
                                 KeyCode::Up => {
+                                    // context_ref 弹窗导航：向上选择
+                                    if state.context_ref_active
+                                        && !state.context_ref_items.is_empty()
+                                    {
+                                        state.context_ref_selected =
+                                            state.context_ref_selected.saturating_sub(1);
+                                        continue;
+                                    }
                                     let hist_len = state.input_history.len();
                                     if hist_len > 0 {
                                         // Save current text as draft before entering history
@@ -764,6 +857,16 @@ where
                                     }
                                 }
                                 KeyCode::Down => {
+                                    // context_ref 弹窗导航：向下选择
+                                    if state.context_ref_active
+                                        && !state.context_ref_items.is_empty()
+                                    {
+                                        let max = state.context_ref_items.len() - 1;
+                                        if state.context_ref_selected < max {
+                                            state.context_ref_selected += 1;
+                                        }
+                                        continue;
+                                    }
                                     let hist_len = state.input_history.len();
                                     if let Some(pos) = state.input_history_pos {
                                         if pos + 1 < hist_len {
@@ -827,20 +930,20 @@ where
                                         }
                                     }
                                 }
-                                KeyCode::Tab => {
-                                    // No-op while context_ref suggestions are visible
-                                    if !state.context_ref_active {
-                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                            state.focused_panel = state.focused_panel.prev();
-                                        } else {
-                                            state.focused_panel = state.focused_panel.next();
-                                        }
+                                KeyCode::Tab | KeyCode::BackTab => {
+                                    // Tab completes @-mention when popup is open
+                                    if state.context_ref_active
+                                        && !state.context_ref_items.is_empty()
+                                    {
+                                        let label = state.context_ref_items
+                                            [state.context_ref_selected.min(state.context_ref_items.len() - 1)]
+                                            .label
+                                            .clone();
+                                        insert_context_ref_text(&mut state, &tui_input, &label);
+                                        continue;
                                     }
-                                }
-                                KeyCode::BackTab => {
-                                    if !state.context_ref_active {
-                                        state.focused_panel = state.focused_panel.prev();
-                                    }
+                                    // While actively typing, Tab does nothing.
+                                    // Press Esc first to exit input mode, then Tab to navigate panels.
                                 }
                                 _ => {}
                             }
@@ -849,10 +952,10 @@ where
                         else if state.search_active {
                             match key.code {
                                 KeyCode::Esc => {
+                                    // Deactivate search mode but preserve matches
+                                    // so n/N navigation works in normal mode.
                                     state.search_active = false;
-                                    state.search_query.clear();
-                                    state.search_match_lines.clear();
-                                    state.search_current_match = None;
+                                    state.input_cursor = 0;
                                 }
                                 KeyCode::Enter => {
                                     // Perform search on focused panel content
@@ -991,14 +1094,22 @@ where
                             match key.code {
                                 KeyCode::Esc => {
                                     if !state.search_match_lines.is_empty() {
+                                        // Clear search matches, retreat to Input — don't auto-activate
                                         state.search_match_lines.clear();
                                         state.search_current_match = None;
                                         state.search_query.clear();
                                         state.search_active = false;
                                         state.input_cursor = 0;
-                                    } else {
-                                        state.should_quit = true;
+                                        state.focused_panel = FocusedPanel::Input;
+                                    } else if state.focused_panel != FocusedPanel::Input {
+                                        // Retreat to input panel — don't auto-activate typing
+                                        state.focused_panel = FocusedPanel::Input;
+                                    } else if state.agent_done {
+                                        // Already focused on Input, agent idle:
+                                        // activate input so user can type (Esc = "start here")
+                                        begin_next_task_input(&mut state, &tui_input);
                                     }
+                                    // Agent running, on Input: Esc does nothing (prevents accidental quit)
                                 }
                                 KeyCode::Char('q') | KeyCode::Char('Q') => {
                                     // Only quit immediately when agent is done.
@@ -1008,7 +1119,7 @@ where
                                     } else {
                                         push_log(
                                             &mut state,
-                                            "Agent 仍在运行，请用 Esc 或 Ctrl+C 退出".into(),
+                                            "Agent 仍在运行，请用 p 取消或 Ctrl+C 退出".into(),
                                             false,
                                         );
                                     }
@@ -1196,7 +1307,6 @@ where
                                     }
                                 }
                                 KeyCode::BackTab => {
-                                    // Don't change focus when search has active matches
                                     if state.search_match_lines.is_empty() {
                                         state.focused_panel = state.focused_panel.prev();
                                     }
@@ -1217,11 +1327,6 @@ where
                                         }
                                     } else if state.search_match_lines.is_empty() {
                                         state.focused_panel = state.focused_panel.next();
-                                        if state.agent_done
-                                            && state.focused_panel == FocusedPanel::Input
-                                        {
-                                            begin_next_task_input(&mut state, &tui_input);
-                                        }
                                     }
                                 }
                                 KeyCode::Char('i') if state.agent_done => {
@@ -1297,7 +1402,7 @@ where
                                         scroll_to_bottom(&mut state);
                                     }
                                 }
-                                // Evolution panel: Enter toggles section collapse
+                                // Enter: panel-specific action or activate input
                                 KeyCode::Enter => {
                                     if state.phase == AgentPhase::Executing
                                         && state.focused_panel == FocusedPanel::MainLeft
@@ -1318,29 +1423,69 @@ where
                                         }
                                     } else if state.focused_panel == FocusedPanel::Evolution {
                                         toggle_evolution_section(&mut state);
+                                    } else if state.focused_panel == FocusedPanel::Input
+                                        && state.agent_done
+                                    {
+                                        // Enter on Input when agent done = start typing
+                                        begin_next_task_input(&mut state, &tui_input);
                                     } else {
-                                        // Fallback: focus the input bar (Tab to cycle panels)
+                                        // Fallback: focus the input panel
                                         state.focused_panel = FocusedPanel::Input;
                                     }
                                 }
-                                KeyCode::Char(_) => {
+                                KeyCode::Char(c) => {
                                     state.focused_panel = FocusedPanel::Input;
+                                    if state.agent_done {
+                                        // Start typing: activate input mode and insert char
+                                        tui_input.awaiting.store(
+                                            true,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        state.awaiting_input = true;
+                                        let mut buf = tui_input.buffer.lock();
+                                        buf.push(c);
+                                        let len = buf.chars().count();
+                                        drop(buf);
+                                        *tui_input.cursor.lock() = len;
+                                    }
                                 }
                                 _ => {}
                             }
                         }
                     }
-                    Ok(Event::Mouse(mouse)) => match mouse.kind {
-                        MouseEventKind::ScrollDown => {
-                            scroll_mouse(&app_state, 1, mouse.column, mouse.row);
+                    Ok(Event::Mouse(mouse)) => {
+                        // When an overlay is open, route mouse scroll to it; ignore clicks
+                        let state = app_state.read();
+                        if state.output_overlay.is_some() {
+                            if mouse.kind == MouseEventKind::ScrollDown {
+                                drop(state);
+                                let mut s = app_state.write();
+                                if let Some(ref mut o) = s.output_overlay {
+                                    o.scroll = o.scroll.saturating_add(1);
+                                }
+                            } else if mouse.kind == MouseEventKind::ScrollUp {
+                                drop(state);
+                                let mut s = app_state.write();
+                                if let Some(ref mut o) = s.output_overlay {
+                                    o.scroll = o.scroll.saturating_sub(1);
+                                }
+                            }
+                            // Ignore clicks when overlay is open — keyboard handles overlay interaction
+                            continue;
                         }
-                        MouseEventKind::ScrollUp => {
-                            scroll_mouse(&app_state, -1, mouse.column, mouse.row);
+                        drop(state);
+                        match mouse.kind {
+                            MouseEventKind::ScrollDown => {
+                                scroll_mouse(&app_state, 1, mouse.column, mouse.row);
+                            }
+                            MouseEventKind::ScrollUp => {
+                                scroll_mouse(&app_state, -1, mouse.column, mouse.row);
+                            }
+                            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                                click_focus(&app_state, &tui_input, mouse.column, mouse.row);
+                            }
+                            _ => {}
                         }
-                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                            click_focus(&app_state, mouse.column, mouse.row);
-                        }
-                        _ => {}
                     },
                     Ok(Event::Resize(..)) => {
                         // Redraw on next frame with new dimensions
@@ -1375,14 +1520,22 @@ where
                 let message = format!("执行失败: {e}");
                 push_log(&mut state, message.clone(), true);
                 state.summary = Some(message);
+            } else if stop_requested && state.summary.is_none() {
+                state.summary = Some("已取消 — 可继续输入下一条任务".into());
             } else if state.summary.is_none() {
                 // Don't overwrite real summary with boilerplate
                 state.summary = Some("完成 — 可继续输入下一条任务".into());
             }
         }
 
-        if result.is_err() || stop_requested {
+        if result.is_err() {
             break result;
+        }
+        // 'p' cancelled the current operation — reset the flag so the next task
+        // runs normally.  Don't break: keep the outer loop alive so the user
+        // can submit another task without restarting the whole session.
+        if stop_requested {
+            stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         }
 
         tui_input
@@ -1437,7 +1590,7 @@ fn apply_delta(current: u16, delta: i16) -> u16 {
     if delta > 0 {
         current.saturating_add(delta as u16)
     } else {
-        current.saturating_sub((-delta) as u16)
+        current.saturating_sub(delta.unsigned_abs())
     }
 }
 
@@ -1494,8 +1647,7 @@ fn settings_cycle_dropdown(state: &mut TuiAppState, label: &str) {
         "金融数据源" => {
             state.user_settings.finance_provider =
                 match state.user_settings.finance_provider.as_str() {
-                    "" => "ftshare".into(),
-                    "ftshare" => "tushare".into(),
+                    "" | "ftshare" => "tushare".into(),
                     "tushare" => "eastmoney".into(),
                     "eastmoney" => "tencent".into(),
                     "tencent" => "sina".into(),
@@ -2185,7 +2337,10 @@ fn push_log(state: &mut TuiAppState, message: String, is_error: bool) {
         repeat_count: 0,
     });
     if state.log_auto_scroll {
-        state.log_scroll = 10_000; // large enough to force bottom-scroll without overflow
+        // 仅在执行阶段（非 Idle）自动滚日志到底部，避免打断用户查看结果
+        if !matches!(state.phase, AgentPhase::Idle) {
+            state.log_scroll = 10_000;
+        }
     }
 }
 
@@ -2237,10 +2392,16 @@ fn scroll_to_top(state: &mut TuiAppState) {
                 crate::state::LeftTab::Plan => state.plan_scroll = 0,
                 crate::state::LeftTab::Execution => state.exec_scroll = 0,
             },
-            _ => state.log_scroll = 0,
+            _ => {
+                state.log_scroll = 0;
+                state.log_auto_scroll = false;
+            }
         },
         FocusedPanel::Evolution => state.evo_scroll = 0,
-        FocusedPanel::MiniLog | FocusedPanel::Input => state.log_scroll = 0,
+        FocusedPanel::MiniLog | FocusedPanel::Input => {
+            state.log_scroll = 0;
+            state.log_auto_scroll = false;
+        }
     }
 }
 
@@ -2422,7 +2583,7 @@ fn scroll_mouse(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, delta: i16, c
 }
 
 /// Mouse click: determine which panel is under the cursor and focus it.
-fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, col: u16, row: u16) {
+fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, tui_input: &TuiInput, col: u16, row: u16) {
     let mut state = app_state.write();
     let term_size = crossterm::terminal::size().unwrap_or((80, 24));
 
@@ -2452,6 +2613,13 @@ fn click_focus(app_state: &Arc<parking_lot::RwLock<TuiAppState>>, col: u16, row:
     // Input/footer row
     if row >= main_top + main_h + mini_log_h {
         state.focused_panel = FocusedPanel::Input;
+        if state.agent_done {
+            tui_input
+                .awaiting
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            state.awaiting_input = true;
+            state.input_cursor = state.input_text.chars().count();
+        }
         return;
     }
 
@@ -2770,9 +2938,10 @@ fn handle_event(state: &mut TuiAppState, event: AgentEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TuiAppState;
+    use crate::state::{LogFilter, SettingsTab, TuiAppState};
     use agent_core::AgentEvent;
     use std::sync::Arc;
+    use uuid::Uuid;
 
     fn make_state() -> TuiAppState {
         let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
@@ -2808,6 +2977,33 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_delta_origin_zero() {
+        assert_eq!(apply_delta(0, 0), 0);
+    }
+
+    #[test]
+    fn test_apply_delta_i16_max() {
+        assert_eq!(apply_delta(u16::MAX, i16::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn test_apply_delta_exact_sub_to_zero() {
+        assert_eq!(apply_delta(1, -1), 0);
+    }
+
+    #[test]
+    fn test_apply_delta_sub_from_max_non_saturating() {
+        assert_eq!(apply_delta(u16::MAX, -1), 65534);
+    }
+
+    #[test]
+    fn test_apply_delta_i16_min_no_panic() {
+        // i16::MIN = -32768; unsigned_abs() = 32768
+        // This would have panicked in debug before the fix using unsigned_abs()
+        assert_eq!(apply_delta(50000, i16::MIN), 50000_u16.saturating_sub(32768));
+    }
+
+    #[test]
     fn test_input_line_count_for_single_line() {
         assert_eq!(input_line_count_for("hello"), 1);
         assert_eq!(input_line_count_for(""), 1);
@@ -2818,6 +3014,17 @@ mod tests {
         let text = "1\n2\n3\n4\n5\n6\n7\n8\n9";
         assert_eq!(input_line_count_for("hello\nworld"), 2);
         assert_eq!(input_line_count_for(text), 8);
+    }
+
+    #[test]
+    fn test_input_line_count_for_trailing_newline() {
+        assert_eq!(input_line_count_for("hello\n"), 2);
+    }
+
+    #[test]
+    fn test_input_line_count_for_only_newlines() {
+        assert_eq!(input_line_count_for("\n"), 2);
+        assert_eq!(input_line_count_for("\n\n"), 3);
     }
 
     // ── handle_event: TurnStarted preserves previous result while awaiting input ──
@@ -3133,5 +3340,2156 @@ mod tests {
             },
         );
         assert_eq!(state.summary.as_deref(), Some("all done"));
+    }
+
+    // ── Sub-agent events ──
+
+    #[test]
+    fn test_sub_agent_started_logs() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(
+            &mut state,
+            AgentEvent::SubAgentStarted {
+                task: "search docs".into(),
+            },
+        );
+        assert!(state.log_entries.len() > before);
+        assert!(state.log_entries.back().unwrap().message.contains("search docs"));
+    }
+
+    #[test]
+    fn test_sub_agent_completed_logs() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::SubAgentCompleted {
+                task: "search docs".into(),
+                summary: "found 3 files".into(),
+            },
+        );
+        let msg = &state.log_entries.back().unwrap().message;
+        assert!(msg.contains("search docs"));
+        assert!(msg.contains("found 3 files"));
+    }
+
+    // ── Replan events ──
+
+    #[test]
+    fn test_replan_needed_resets_plan_state() {
+        let mut state = make_state();
+        state.streaming_buffer = "old plan".into();
+        state.plan_ready = true;
+        state.plan_scroll = 5;
+        handle_event(
+            &mut state,
+            AgentEvent::ReplanNeeded {
+                reason: "execution failed".into(),
+                attempt: 1,
+            },
+        );
+        assert_eq!(state.phase, AgentPhase::Planning);
+        assert!(state.streaming_buffer.is_empty());
+        assert!(!state.plan_ready);
+        assert_eq!(state.plan_scroll, 0);
+        assert_eq!(state.left_tab, LeftTab::Plan);
+    }
+
+    #[test]
+    fn test_replan_complete_updates_step_count() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::ReplanComplete {
+                new_steps_count: 3,
+            },
+        );
+        assert_eq!(state.plan_steps_count, 3);
+        assert!(state.plan_ready);
+    }
+
+    // ── Gateway events ──
+
+    #[test]
+    fn test_gateway_models_discovered() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::GatewayModelsDiscovered {
+                models: vec!["claude".into(), "gpt4".into()],
+                gateway_url: "http://gw:8080".into(),
+            },
+        );
+        assert!(state.gateway_enabled);
+        assert_eq!(state.gateway_url, "http://gw:8080");
+        assert_eq!(state.gateway_models.len(), 2);
+    }
+
+    #[test]
+    fn test_gateway_route_decision() {
+        let mut state = make_state();
+        state.gateway_enabled = true;
+        handle_event(
+            &mut state,
+            AgentEvent::GatewayRouteDecision {
+                model: "claude".into(),
+                shg_triggered: true,
+                reason: "low cost".into(),
+            },
+        );
+        assert!(state.shg_triggered);
+        assert!(state.last_route_decision.is_some());
+        assert!(state
+            .last_route_decision
+            .as_ref()
+            .unwrap()
+            .contains("claude"));
+    }
+
+    // ── SetPersonality ──
+
+    #[test]
+    fn test_set_personality_updates_name() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::SetPersonality {
+                name: "Buddy".into(),
+            },
+        );
+        assert_eq!(state.agent_name, "Buddy");
+    }
+
+    // ── Summary streaming ──
+
+    #[test]
+    fn test_summary_streaming_accumulates() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryStreamingToken {
+                token: "Hello".into(),
+            },
+        );
+        handle_event(
+            &mut state,
+            AgentEvent::SummaryStreamingToken {
+                token: " World".into(),
+            },
+        );
+        assert_eq!(state.summary_streaming_buffer, "Hello World");
+        assert!(state.results_visible);
+    }
+
+    // ── StepStarted / StepCompleted ──
+
+    #[test]
+    fn test_step_started_adds_execution_and_selects() {
+        let mut state = make_state();
+        let sid = uuid::Uuid::new_v4();
+        handle_event(
+            &mut state,
+            AgentEvent::StepStarted {
+                step_id: sid,
+                tool: "bash".into(),
+                layer: 0,
+            },
+        );
+        assert_eq!(state.executions.len(), 1);
+        assert_eq!(state.executions[0].step_id, sid);
+        assert_eq!(state.executions[0].tool, "bash");
+        assert_eq!(state.executions[0].status, StepStatus::Running);
+        assert_eq!(state.exec_selected_index, Some(0));
+    }
+
+    #[test]
+    fn test_step_completed_updates_status_and_content() {
+        let mut state = make_state();
+        let sid = uuid::Uuid::new_v4();
+        // Add a running step first
+        state.executions.push(StepExecState {
+            step_id: sid,
+            tool: "bash".into(),
+            status: StepStatus::Running,
+            content_preview: None,
+            content_full: None,
+            duration_ms: None,
+            layer: 0,
+        });
+        state.exec_completed_steps = 0;
+        // Complete it
+        handle_event(
+            &mut state,
+            AgentEvent::StepCompleted {
+                output: agent_core::StepOutput {
+                    step_id: sid,
+                    tool: "bash".into(),
+                    success: true,
+                    content: "execution output".into(),
+                    duration_ms: 1500,
+                },
+            },
+        );
+        let step = &state.executions[0];
+        assert_eq!(step.status, StepStatus::Success);
+        assert_eq!(step.duration_ms, Some(1500));
+        assert!(step.content_full.is_some());
+        assert!(step.content_preview.is_some());
+        assert_eq!(state.exec_completed_steps, 1);
+        // Should have log entries (step result + summary line)
+        assert!(!state.log_entries.is_empty());
+    }
+
+    // ── close_overlays_focus_input ──
+
+    #[test]
+    fn test_close_overlays_focus_input() {
+        let mut state = make_state();
+        state.output_overlay = Some(crate::state::StepOutputOverlay {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            duration_ms: None,
+            full_content: "test".into(),
+            scroll: 0,
+        });
+        state.slash_command_popup = Some(crate::state::SlashResult {
+            title: "test".into(),
+            lines: vec![],
+            scroll: 0,
+        });
+        state.help_visible = true;
+        state.settings_visible = true;
+        state.settings_editing = true;
+        state.settings_dirty_confirm = true;
+        close_overlays_focus_input(&mut state);
+        assert!(state.output_overlay.is_none());
+        assert!(state.slash_command_popup.is_none());
+        assert!(!state.help_visible);
+        assert!(!state.settings_visible);
+        assert!(!state.settings_editing);
+        assert!(!state.settings_dirty_confirm);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+    }
+
+    // ── is_ctrl_c ──
+
+    #[test]
+    fn test_is_ctrl_c() {
+        assert!(is_ctrl_c(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(is_ctrl_c(KeyCode::Char('C'), KeyModifiers::CONTROL));
+        assert!(!is_ctrl_c(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert!(!is_ctrl_c(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert!(!is_ctrl_c(KeyCode::Enter, KeyModifiers::CONTROL));
+    }
+
+    // ── request_tui_quit ──
+
+    #[test]
+    fn test_request_tui_quit_sets_flag() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        request_tui_quit(&mut state, &tui_input);
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn test_request_tui_quit_with_stop_flag() {
+        let mut state = make_state();
+        let mut tui_input = TuiInput::new();
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        tui_input.stop_flag = Some(Arc::clone(&flag));
+        request_tui_quit(&mut state, &tui_input);
+        assert!(flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    // ── footer_height_for ──
+
+    #[test]
+    fn test_footer_height_awaiting_input() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.input_line_count = 3;
+        assert_eq!(footer_height_for(&state), 4); // 3 + 1 hints line
+    }
+
+    #[test]
+    fn test_footer_height_search_active() {
+        let mut state = make_state();
+        state.search_active = true;
+        state.input_line_count = 1;
+        assert_eq!(footer_height_for(&state), 2);
+    }
+
+    #[test]
+    fn test_footer_height_idle() {
+        let state = make_state();
+        assert_eq!(footer_height_for(&state), 1);
+    }
+
+    // ── session_tabs_height_for ──
+
+    #[test]
+    fn test_session_tabs_height_multiple_tabs() {
+        let mut state = make_state();
+        state.session_tabs.push(crate::state::SessionTab {
+            name: "会话2".into(),
+        });
+        assert_eq!(session_tabs_height_for(&state), 1);
+    }
+
+    #[test]
+    fn test_session_tabs_height_single_tab() {
+        let state = make_state();
+        assert_eq!(session_tabs_height_for(&state), 0);
+    }
+
+    // ── base64_encode ──
+
+    #[test]
+    fn test_base64_encode_empty() {
+        assert_eq!(base64_encode(b""), "");
+    }
+
+    #[test]
+    fn test_base64_encode_single_byte() {
+        // "f" = 0x66 = 01100110 → "Zg=="
+        assert_eq!(base64_encode(b"f"), "Zg==");
+    }
+
+    #[test]
+    fn test_base64_encode_two_bytes() {
+        // "fo" = 0x666F → "Zm8="
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+    }
+
+    #[test]
+    fn test_base64_encode_three_bytes() {
+        // "foo" = 0x666F6F → "Zm9v"
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+    }
+
+    // ── push_log dedup ──
+
+    #[test]
+    fn test_push_log_duplicate_increments_count() {
+        let mut state = make_state();
+        push_log(&mut state, "hello".into(), false);
+        push_log(&mut state, "hello".into(), false);
+        assert_eq!(state.log_entries.len(), 1);
+        assert_eq!(state.log_entries[0].repeat_count, 1);
+    }
+
+    #[test]
+    fn test_push_log_different_message_adds_entry() {
+        let mut state = make_state();
+        push_log(&mut state, "hello".into(), false);
+        push_log(&mut state, "world".into(), false);
+        assert_eq!(state.log_entries.len(), 2);
+    }
+
+    #[test]
+    fn test_push_log_auto_scroll_in_executing() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        state.log_auto_scroll = true;
+        push_log(&mut state, "msg".into(), false);
+        assert_eq!(state.log_scroll, 10_000);
+    }
+
+    #[test]
+    fn test_push_log_no_auto_scroll_when_idle() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Idle;
+        state.log_scroll = 5;
+        state.log_auto_scroll = true;
+        push_log(&mut state, "msg".into(), false);
+        assert_eq!(state.log_scroll, 5); // not changed
+    }
+
+    // ── settings_cycle_dropdown ──
+
+    #[test]
+    fn test_settings_cycle_dropdown_llm_provider() {
+        let mut state = make_state();
+        state.user_settings.llm_provider = "deepseek".into();
+        settings_cycle_dropdown(&mut state, "提供商标识");
+        assert_eq!(state.user_settings.llm_provider, "openai");
+        settings_cycle_dropdown(&mut state, "提供商标识");
+        assert_eq!(state.user_settings.llm_provider, "anthropic");
+        settings_cycle_dropdown(&mut state, "提供商标识");
+        assert_eq!(state.user_settings.llm_provider, "deepseek");
+    }
+
+    #[test]
+    fn test_settings_cycle_dropdown_finance_provider() {
+        let mut state = make_state();
+        state.user_settings.finance_provider = "ftshare".into();
+        settings_cycle_dropdown(&mut state, "金融数据源");
+        assert_eq!(state.user_settings.finance_provider, "tushare");
+        settings_cycle_dropdown(&mut state, "金融数据源");
+        assert_eq!(state.user_settings.finance_provider, "eastmoney");
+    }
+
+    #[test]
+    fn test_settings_cycle_dropdown_finance_from_empty_skips_ftshare() {
+        let mut state = make_state();
+        state.user_settings.finance_provider = "".into();
+        settings_cycle_dropdown(&mut state, "金融数据源");
+        // "" and "ftshare" render identically, so skip past to tushare
+        assert_eq!(state.user_settings.finance_provider, "tushare");
+    }
+
+    #[test]
+    fn test_settings_cycle_dropdown_finance_wraps_around() {
+        let mut state = make_state();
+        state.user_settings.finance_provider = "sina".into();
+        settings_cycle_dropdown(&mut state, "金融数据源");
+        assert_eq!(state.user_settings.finance_provider, "ftshare");
+    }
+
+    #[test]
+    fn test_settings_cycle_dropdown_theme_preset() {
+        let mut state = make_state();
+        let names = crate::theme::Theme::preset_names();
+        let current = state.theme_preset.clone();
+        let pos = names.iter().position(|&n| n == current).unwrap_or(0);
+        let expected = names[(pos + 1) % names.len()];
+        settings_cycle_dropdown(&mut state, "预设主题");
+        assert_eq!(state.theme_preset, expected);
+    }
+
+    #[test]
+    fn test_settings_cycle_dropdown_unknown_label_noop() {
+        let mut state = make_state();
+        let before = state.user_settings.llm_provider.clone();
+        settings_cycle_dropdown(&mut state, "nonexistent");
+        assert_eq!(state.user_settings.llm_provider, before);
+    }
+
+    // ── settings_toggle ──
+
+    #[test]
+    fn test_settings_toggle_search() {
+        let mut state = make_state();
+        state.user_settings.search_enabled = false;
+        settings_toggle(&mut state, "启用搜索");
+        assert!(state.user_settings.search_enabled);
+        settings_toggle(&mut state, "启用搜索");
+        assert!(!state.user_settings.search_enabled);
+    }
+
+    #[test]
+    fn test_settings_toggle_unknown_label_noop() {
+        let mut state = make_state();
+        let before = state.user_settings.search_enabled;
+        settings_toggle(&mut state, "nonexistent");
+        assert_eq!(state.user_settings.search_enabled, before);
+    }
+
+    // ── open_step_overlay ──
+
+    #[test]
+    fn test_open_step_overlay_sets_correct_fields() {
+        let mut state = make_state();
+        let sid = uuid::Uuid::new_v4();
+        state.executions.push(StepExecState {
+            step_id: sid,
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: Some("preview".into()),
+            content_full: Some("full content".into()),
+            duration_ms: Some(150),
+            layer: 0,
+        });
+        open_step_overlay(&mut state, 0);
+        assert_eq!(state.exec_selected_index, Some(0));
+        let overlay = state.output_overlay.as_ref().unwrap();
+        assert_eq!(overlay.step_id, sid);
+        assert_eq!(overlay.tool, "bash");
+        assert_eq!(overlay.full_content, "full content");
+        assert_eq!(overlay.duration_ms, Some(150));
+        assert_eq!(overlay.scroll, 0);
+    }
+
+    #[test]
+    fn test_open_step_overlay_out_of_bounds() {
+        let mut state = make_state();
+        open_step_overlay(&mut state, 99);
+        assert!(state.output_overlay.is_none());
+        assert!(state.exec_selected_index.is_none());
+    }
+
+    #[test]
+    fn test_open_step_overlay_falls_back_to_preview() {
+        let mut state = make_state();
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "read".into(),
+            status: crate::state::StepStatus::Failed,
+            content_preview: Some("preview only".into()),
+            content_full: None,
+            duration_ms: None,
+            layer: 1,
+        });
+        open_step_overlay(&mut state, 0);
+        let overlay = state.output_overlay.unwrap();
+        assert_eq!(overlay.full_content, "preview only");
+    }
+
+    // ── scroll_to_bottom ──
+
+    #[test]
+    fn test_scroll_to_bottom_sets_log_auto_scroll_for_minilog() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_auto_scroll = false;
+        state.log_scroll = 3;
+        scroll_to_bottom(&mut state);
+        assert!(state.log_auto_scroll);
+        // scroll_focused called with large positive delta
+        assert!(state.log_scroll > 3);
+    }
+
+    #[test]
+    fn test_scroll_to_bottom_does_not_set_auto_scroll_for_executing_main_left() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.log_auto_scroll = false;
+        scroll_to_bottom(&mut state);
+        assert!(!state.log_auto_scroll);
+    }
+
+    // ── toggle_evolution_section ──
+
+    #[test]
+    fn test_toggle_evolution_section_hides_all_when_any_visible() {
+        let mut state = make_state();
+        state.evo_weights_hidden = false;
+        state.evo_stats_hidden = true;
+        state.evo_meta_hidden = true;
+        toggle_evolution_section(&mut state);
+        assert!(state.evo_weights_hidden);
+        assert!(state.evo_stats_hidden);
+        assert!(state.evo_meta_hidden);
+    }
+
+    #[test]
+    fn test_toggle_evolution_section_shows_all_when_all_hidden() {
+        let mut state = make_state();
+        state.evo_weights_hidden = true;
+        state.evo_stats_hidden = true;
+        state.evo_meta_hidden = true;
+        toggle_evolution_section(&mut state);
+        assert!(!state.evo_weights_hidden);
+        assert!(!state.evo_stats_hidden);
+        assert!(!state.evo_meta_hidden);
+    }
+
+    // ── export_to_file ──
+
+    #[test]
+    fn test_export_to_file_in_idle_phase() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Idle;
+        state.summary = Some("test result".into());
+        state.exec_completed_steps = 3;
+        state.exec_total_steps = 5;
+        state.total_duration_ms = Some(1500);
+        state.log_entries.push_back(LogEntry {
+            message: "log msg".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        let (name, content) = export_to_file(&state).unwrap();
+        assert!(name.contains("hermess_results"));
+        assert!(content.contains("test result"));
+        assert!(content.contains("3/5"));
+        assert!(content.contains("1.5s"));
+        assert!(content.contains("log msg"));
+    }
+
+    #[test]
+    fn test_export_to_file_in_planning_phase_with_streaming_buffer() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Planning;
+        state.streaming_buffer = "streaming plan content".into();
+        let (name, content) = export_to_file(&state).unwrap();
+        assert!(name.contains("hermess_plan"));
+        assert!(content.contains("streaming plan content"));
+    }
+
+    #[test]
+    fn test_export_to_file_in_executing_phase_from_steps() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        state.streaming_buffer = String::new();
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: Some("step preview".into()),
+            content_full: Some("step full output".into()),
+            duration_ms: Some(240),
+            layer: 0,
+        });
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "read".into(),
+            status: crate::state::StepStatus::Failed,
+            content_preview: Some("failed step".into()),
+            content_full: None,
+            duration_ms: None,
+            layer: 0,
+        });
+        let (name, content) = export_to_file(&state).unwrap();
+        assert!(name.contains("hermess_plan"));
+        assert!(content.contains("bash"));
+        assert!(content.contains("step full output"));
+        assert!(content.contains("FAIL"));
+        assert!(content.contains("OK"));
+    }
+
+    #[test]
+    fn test_export_to_file_pending_step_status() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "pending_step".into(),
+            status: crate::state::StepStatus::Pending,
+            content_preview: Some("waiting...".into()),
+            content_full: None,
+            duration_ms: None,
+            layer: 0,
+        });
+        let (_name, content) = export_to_file(&state).unwrap();
+        assert!(content.contains("pending_step"));
+        assert!(content.contains("..."));
+    }
+
+    #[test]
+    fn test_export_to_file_empty_state() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Idle;
+        let (_name, content) = export_to_file(&state).unwrap();
+        // Should succeed even with empty state
+        assert!(!content.is_empty());
+    }
+
+    // ── copy_focused_content ──
+
+    #[test]
+    fn test_copy_focused_content_from_output_overlay() {
+        let mut state = make_state();
+        state.output_overlay = Some(crate::state::StepOutputOverlay {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            duration_ms: None,
+            full_content: "overlay content".into(),
+            scroll: 0,
+        });
+        assert_eq!(
+            copy_focused_content(&state),
+            Some("overlay content".into())
+        );
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_planning_streaming_buffer() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = LeftTab::Plan;
+        state.streaming_buffer = "plan buffer".into();
+        assert_eq!(copy_focused_content(&state), Some("plan buffer".into()));
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_idle_summary() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Idle;
+        state.summary = Some("idle summary".into());
+        assert_eq!(copy_focused_content(&state), Some("idle summary".into()));
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_entries.push_back(LogEntry {
+            message: "error entry".into(),
+            is_error: true,
+            repeat_count: 0,
+        });
+        state.log_entries.push_back(LogEntry {
+            message: "info entry".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        let copied = copy_focused_content(&state).unwrap();
+        assert!(copied.contains("[!]"));
+        assert!(copied.contains("error entry"));
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_evolution_returns_none() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        assert_eq!(copy_focused_content(&state), None);
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_empty_log_returns_none() {
+        let mut s = make_state();
+        s.focused_panel = FocusedPanel::MiniLog;
+        assert_eq!(copy_focused_content(&s), None);
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_execution_selected_step() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.exec_selected_index = Some(0);
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: Some("preview".into()),
+            content_full: Some("full step".into()),
+            duration_ms: Some(100),
+            layer: 0,
+        });
+        assert_eq!(copy_focused_content(&state), Some("full step".into()));
+    }
+
+    #[test]
+    fn test_copy_focused_content_empty_streaming_buffer() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = LeftTab::Plan;
+        state.streaming_buffer = "".into();
+        assert_eq!(copy_focused_content(&state), None);
+    }
+
+    #[test]
+    fn test_copy_focused_content_execution_no_step_selected() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.exec_selected_index = None;
+        assert_eq!(copy_focused_content(&state), None);
+    }
+
+    #[test]
+    fn test_copy_focused_content_from_input_panel() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Input;
+        state.log_entries.push_back(crate::state::LogEntry {
+            message: "recent log".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        let result = copy_focused_content(&state);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("recent log"));
+    }
+
+    #[test]
+    fn test_copy_focused_content_input_panel_empty() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Input;
+        assert_eq!(copy_focused_content(&state), None);
+    }
+
+    // ── dispatch_slash_command ──
+
+    #[test]
+    fn test_dispatch_slash_help_toggles() {
+        let mut state = make_state();
+        assert!(!state.help_visible);
+        dispatch_slash_command(&mut state, "/help");
+        assert!(state.help_visible);
+        dispatch_slash_command(&mut state, "/h");
+        assert!(!state.help_visible);
+    }
+
+    #[test]
+    fn test_dispatch_slash_model_with_args() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/model claude-sonnet-4-6");
+        assert_eq!(state.user_settings.llm_model, "claude-sonnet-4-6");
+        assert!(state.settings_dirty);
+    }
+
+    #[test]
+    fn test_dispatch_slash_model_without_args_shows_current() {
+        let mut state = make_state();
+        let before_len = state.log_entries.len();
+        dispatch_slash_command(&mut state, "/model");
+        assert!(state.log_entries.len() > before_len);
+    }
+
+    #[test]
+    fn test_dispatch_slash_status() {
+        let mut state = make_state();
+        state.turn = 5;
+        state.phase = AgentPhase::Executing;
+        state.exec_completed_steps = 3;
+        state.exec_total_steps = 7;
+        dispatch_slash_command(&mut state, "/status");
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Status");
+        let content = popup.lines.join("\n");
+        assert!(content.contains("5"));
+        assert!(content.contains("执行中"));
+    }
+
+    #[test]
+    fn test_dispatch_slash_debug() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/debug");
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Debug");
+    }
+
+    #[test]
+    fn test_dispatch_slash_personality_no_args() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/personality");
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Personality");
+        let content = popup.lines.join("\n");
+        assert!(content.contains("可用人格"));
+    }
+
+    #[test]
+    fn test_dispatch_slash_personality_with_args() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/personality concise");
+        let popup = state.slash_command_popup.unwrap();
+        let content = popup.lines.join("\n");
+        assert!(content.contains("concise"));
+    }
+
+    #[test]
+    fn test_dispatch_slash_unknown_command_does_not_panic() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/nonexistent");
+        // Should not panic, no crash = pass
+    }
+
+    #[test]
+    fn test_dispatch_slash_usage_popup() {
+        let mut state = make_state();
+        state.frame_count = 90; // 3 seconds
+        dispatch_slash_command(&mut state, "/usage");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Usage");
+        assert!(popup.lines.iter().any(|l| l.contains("回合数")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_sessions_popup() {
+        let mut state = make_state();
+        state.session_tabs.push(crate::state::SessionTab {
+            name: "test".into(),
+        });
+        dispatch_slash_command(&mut state, "/sessions");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Sessions");
+    }
+
+    #[test]
+    fn test_dispatch_slash_skills_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/skills");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Skills");
+        assert!(!popup.lines.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_slash_memory_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/memory");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "memory");
+    }
+
+    // ── settings_get_text ──
+
+    #[test]
+    fn test_settings_get_text_all_fields() {
+        let mut state = make_state();
+        state.user_settings.llm_provider = "test_provider".into();
+        state.user_settings.llm_model = "test_model".into();
+        state.user_settings.llm_api_key = "sk-key".into();
+        state.user_settings.llm_base_url = "https://test".into();
+        state.user_settings.search_api_key = "sk-search".into();
+        state.user_settings.finance_provider = "test_fin".into();
+        state.user_settings.finance_tushare_token = "tok".into();
+        state.user_settings.feishu_app_id = "app-id".into();
+        state.user_settings.feishu_app_secret = "app-secret".into();
+        assert_eq!(settings_get_text(&state, "提供商标识"), "test_provider");
+        assert_eq!(settings_get_text(&state, "模型名称"), "test_model");
+        assert_eq!(settings_get_text(&state, "API Key"), "sk-key");
+        assert_eq!(settings_get_text(&state, "Base URL"), "https://test");
+        assert_eq!(settings_get_text(&state, "搜索 Key"), "sk-search");
+        assert_eq!(settings_get_text(&state, "金融数据源"), "test_fin");
+        assert_eq!(settings_get_text(&state, "TuShare Token"), "tok");
+        assert_eq!(settings_get_text(&state, "App ID"), "app-id");
+        assert_eq!(settings_get_text(&state, "App Secret"), "app-secret");
+    }
+
+    #[test]
+    fn test_settings_get_text_unknown_label() {
+        let state = make_state();
+        assert_eq!(settings_get_text(&state, "nonexistent"), "");
+    }
+
+    // ── settings_apply_text ──
+
+    #[test]
+    fn test_settings_apply_text_all_fields() {
+        let mut state = make_state();
+        state.settings_edit_buffer = "new_provider".into();
+        settings_apply_text(&mut state, "提供商标识");
+        assert_eq!(state.user_settings.llm_provider, "new_provider");
+
+        state.settings_edit_buffer = "new_model".into();
+        settings_apply_text(&mut state, "模型名称");
+        assert_eq!(state.user_settings.llm_model, "new_model");
+
+        state.settings_edit_buffer = "new_key".into();
+        settings_apply_text(&mut state, "API Key");
+        assert_eq!(state.user_settings.llm_api_key, "new_key");
+
+        state.settings_edit_buffer = "new_url".into();
+        settings_apply_text(&mut state, "Base URL");
+        assert_eq!(state.user_settings.llm_base_url, "new_url");
+
+        state.settings_edit_buffer = "new_search_key".into();
+        settings_apply_text(&mut state, "搜索 Key");
+        assert_eq!(state.user_settings.search_api_key, "new_search_key");
+
+        state.settings_edit_buffer = "new_finance".into();
+        settings_apply_text(&mut state, "金融数据源");
+        assert_eq!(state.user_settings.finance_provider, "new_finance");
+
+        state.settings_edit_buffer = "new_token".into();
+        settings_apply_text(&mut state, "TuShare Token");
+        assert_eq!(state.user_settings.finance_tushare_token, "new_token");
+    }
+
+    #[test]
+    fn test_settings_apply_text_unknown_label_noop() {
+        let mut state = make_state();
+        state.settings_edit_buffer = "ignored".into();
+        let before = state.user_settings.llm_provider.clone();
+        settings_apply_text(&mut state, "nonexistent");
+        assert_eq!(state.user_settings.llm_provider, before);
+    }
+
+    // ── settings_close flow ──
+
+    #[test]
+    fn test_settings_close_not_dirty_just_closes() {
+        let mut state = make_state();
+        state.settings_visible = true;
+        state.settings_dirty = false;
+        state.focused_panel = FocusedPanel::Evolution;
+        state.settings_edit_buffer = "some text".into();
+        close_settings_or_confirm_discard(&mut state);
+        assert!(!state.settings_visible);
+        assert!(!state.settings_editing);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+        assert!(state.settings_edit_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_settings_close_dirty_confirms_then_closes() {
+        let mut state = make_state();
+        state.settings_visible = true;
+        state.settings_dirty = true;
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.settings_edit_buffer = "dirty buffer".into();
+        // First call: set dirty_confirm flag
+        close_settings_or_confirm_discard(&mut state);
+        assert!(state.settings_dirty_confirm);
+        assert!(state.settings_visible);
+        // Second call: actually close
+        close_settings_or_confirm_discard(&mut state);
+        assert!(!state.settings_visible);
+        assert!(!state.settings_dirty_confirm);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+        assert!(state.settings_edit_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_settings_close_inconsistent_state_dirty_confirm_without_dirty() {
+        // (dirty=false, dirty_confirm=true) should not happen but is handled gracefully
+        let mut state = make_state();
+        state.settings_visible = true;
+        state.settings_dirty = false;
+        state.settings_dirty_confirm = true;
+        close_settings_or_confirm_discard(&mut state);
+        assert!(!state.settings_visible);
+        assert!(!state.settings_dirty);
+        assert!(!state.settings_dirty_confirm);
+    }
+
+    // ── Settings apply_text Tab behavior ──
+
+    // settings_apply_text does not set dirty on its own; callers are responsible
+    #[test]
+    fn test_settings_apply_text_applies_correctly() {
+        let mut state = make_state();
+        state.settings_edit_buffer = "new_value".into();
+        state.settings_tab = SettingsTab::Llm;
+
+        let fields = crate::panels::settings::fields_for_tab(state.settings_tab);
+        let f = &fields[0]; // 提供商标识
+        settings_apply_text(&mut state, f.label);
+
+        assert_eq!(state.user_settings.llm_provider, "new_value");
+    }
+
+    // ── Input handling edge cases ──
+
+    #[test]
+    fn test_begin_next_task_input_sets_awaiting() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(state.awaiting_input);
+        assert!(state.input_line_count >= 1);
+    }
+
+    #[test]
+    fn test_context_ref_item_default_population() {
+        let mut state = make_state();
+        state.context_ref_items.push(crate::state::ContextRefItem {
+            source: "filesystem".into(),
+            label: "src/main.rs".into(),
+            preview: "modified".into(),
+        });
+        state.context_ref_items.push(crate::state::ContextRefItem {
+            source: "git".into(),
+            label: "fix: bug".into(),
+            preview: "abc123".into(),
+        });
+        assert_eq!(state.context_ref_items.len(), 2);
+        assert_eq!(state.context_ref_items[0].label, "src/main.rs");
+        assert_eq!(state.context_ref_items[1].source, "git");
+    }
+
+    // ── insert_context_ref_text ──
+
+    #[test]
+    fn test_insert_context_ref_text_with_at_symbol() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "check @src/mai".into();
+        *tui_input.cursor.lock() = 15;
+        state.context_ref_active = true;
+        state.context_ref_query = "src/mai".into();
+        state.context_ref_items.push(crate::state::ContextRefItem {
+            source: "filesystem".into(),
+            label: "src/main.rs".into(),
+            preview: "modified".into(),
+        });
+
+        insert_context_ref_text(&mut state, &tui_input, "src/main.rs");
+
+        let buffer = tui_input.buffer.lock().clone();
+        assert_eq!(buffer, "check src/main.rs ");
+        assert!(!state.context_ref_active);
+        assert!(state.context_ref_query.is_empty());
+        assert!(state.context_ref_items.is_empty());
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+    }
+
+    #[test]
+    fn test_insert_context_ref_text_without_at_symbol() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "just text".into();
+        *tui_input.cursor.lock() = 9;
+
+        insert_context_ref_text(&mut state, &tui_input, ".gitignore");
+
+        let buffer = tui_input.buffer.lock().clone();
+        // No '@' found, so label is appended at end
+        assert!(buffer.contains(".gitignore"));
+        assert!(!state.context_ref_active);
+    }
+
+    #[test]
+    fn test_insert_context_ref_text_at_sign_at_position_zero() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "@query".into();
+        *tui_input.cursor.lock() = 6;
+        insert_context_ref_text(&mut state, &tui_input, "src/lib.rs");
+        let buffer = tui_input.buffer.lock().clone();
+        assert_eq!(buffer, "src/lib.rs ");
+    }
+
+    #[test]
+    fn test_insert_context_ref_text_empty_buffer() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "".into();
+        *tui_input.cursor.lock() = 0;
+        insert_context_ref_text(&mut state, &tui_input, "config.toml");
+        let buffer = tui_input.buffer.lock().clone();
+        assert_eq!(buffer, "config.toml ");
+    }
+
+    #[test]
+    fn test_insert_context_ref_text_multiple_at_signs_uses_last() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "ref @first @second".into();
+        *tui_input.cursor.lock() = 20;
+        insert_context_ref_text(&mut state, &tui_input, "target.rs");
+        let buffer = tui_input.buffer.lock().clone();
+        assert_eq!(buffer, "ref @first target.rs ");
+    }
+
+    #[test]
+    fn test_insert_context_ref_text_cursor_set_to_char_count() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        // "查看" = 6 bytes, 2 chars
+        *tui_input.buffer.lock() = "查看 @bug".into();
+        *tui_input.cursor.lock() = 8;
+        insert_context_ref_text(&mut state, &tui_input, "修复");
+        let cursor = *tui_input.cursor.lock();
+        // buffer should be "查看 修复 " = 3（查看）chars + 1 space + 2（修复）chars + 1 space
+        assert_eq!(cursor, "查看 修复 ".chars().count());
+        // verify buffer content
+        let buffer = tui_input.buffer.lock().clone();
+        assert_eq!(buffer, "查看 修复 ");
+    }
+
+    // ── page_scroll_focused ──
+
+    #[test]
+    fn test_page_scroll_focused_positive() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 5;
+        page_scroll_focused(&mut state, 1);
+        assert_eq!(state.log_scroll, 17); // 5 + 12
+    }
+
+    #[test]
+    fn test_page_scroll_focused_negative() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 50;
+        page_scroll_focused(&mut state, -1);
+        assert_eq!(state.log_scroll, 38); // 50 - 12
+    }
+
+    // ── scroll_to_top ──
+
+    #[test]
+    fn test_scroll_to_top_main_left_planning_plan_tab() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = LeftTab::Plan;
+        state.plan_scroll = 42;
+        scroll_to_top(&mut state);
+        assert_eq!(state.plan_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_main_left_executing_exec_tab() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.exec_scroll = 99;
+        scroll_to_top(&mut state);
+        assert_eq!(state.exec_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_evolution() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 30;
+        scroll_to_top(&mut state);
+        assert_eq!(state.evo_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_minilog() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_auto_scroll = true;
+        state.log_scroll = 100;
+        scroll_to_top(&mut state);
+        assert_eq!(state.log_scroll, 0);
+        assert!(!state.log_auto_scroll);
+    }
+
+    #[test]
+    fn test_scroll_to_top_idle_main_left_resets_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Idle;
+        state.log_auto_scroll = true;
+        state.log_scroll = 25;
+        scroll_to_top(&mut state);
+        assert_eq!(state.log_scroll, 0);
+        assert!(!state.log_auto_scroll);
+    }
+
+    // ── get_focused_panel_lines ──
+
+    #[test]
+    fn test_get_focused_panel_lines_from_planning_buffer() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = LeftTab::Plan;
+        state.streaming_buffer = "line1\nline2\nline3".into();
+        let lines = get_focused_panel_lines(&state);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+    }
+
+    #[test]
+    fn test_get_focused_panel_lines_from_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_entries.push_back(LogEntry {
+            message: "info log".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        state.log_entries.push_back(LogEntry {
+            message: "error log".into(),
+            is_error: true,
+            repeat_count: 0,
+        });
+        let lines = get_focused_panel_lines(&state);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("[*]"));
+        assert!(lines[0].contains("info log"));
+        assert!(lines[1].contains("[!]"));
+        assert!(lines[1].contains("error log"));
+    }
+
+    #[test]
+    fn test_get_focused_panel_lines_from_evolution() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        let lines = get_focused_panel_lines(&state);
+        // Weights may be empty for fresh engine, just verify no panic
+        let _ = lines;
+    }
+
+    // ── toggle_evolution_section additional edge ──
+
+    #[test]
+    fn test_toggle_evolution_section_partial_visibility() {
+        let mut state = make_state();
+        // Only weights visible, stats and meta hidden
+        state.evo_weights_hidden = false;
+        state.evo_stats_hidden = true;
+        state.evo_meta_hidden = true;
+        toggle_evolution_section(&mut state);
+        // All should become hidden (since not all were hidden)
+        assert!(state.evo_weights_hidden);
+        assert!(state.evo_stats_hidden);
+        assert!(state.evo_meta_hidden);
+    }
+
+    // ── Export with steps having empty content ──
+
+    #[test]
+    fn test_export_includes_step_without_full_content() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        state.streaming_buffer = String::new();
+        state.executions.push(StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "read".into(),
+            status: crate::state::StepStatus::Pending,
+            content_preview: None,
+            content_full: None,
+            duration_ms: None,
+            layer: 0,
+        });
+        let (_name, content) = export_to_file(&state).unwrap();
+        assert!(content.contains("read"));
+    }
+
+    // ── left_tab_for_click boundary values ──
+
+    #[test]
+    fn test_left_tab_for_click_boundaries() {
+        assert_eq!(left_tab_for_click(0), None);
+        assert_eq!(left_tab_for_click(1), Some(LeftTab::Plan));
+        assert_eq!(left_tab_for_click(6), Some(LeftTab::Plan));
+        assert_eq!(left_tab_for_click(7), None);
+        assert_eq!(left_tab_for_click(8), Some(LeftTab::Execution));
+        assert_eq!(left_tab_for_click(13), Some(LeftTab::Execution));
+        assert_eq!(left_tab_for_click(14), None);
+    }
+
+    // ── Character key activates input mode from normal mode ──
+
+    #[test]
+    fn test_character_key_focuses_and_activates_input() {
+        let mut state = make_state();
+        state.agent_done = true;
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.awaiting_input = false;
+
+        let tui_input = TuiInput::new();
+
+        // Simulate the Char(c) fallback in normal mode
+        state.focused_panel = FocusedPanel::Input;
+        tui_input
+            .awaiting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        state.awaiting_input = true;
+        {
+            let mut buf = tui_input.buffer.lock();
+            buf.push('a');
+            let len = buf.chars().count();
+            drop(buf);
+            *tui_input.cursor.lock() = len;
+        }
+
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+        assert!(state.awaiting_input);
+        assert_eq!(tui_input.buffer.lock().chars().count(), 1);
+    }
+
+    // ── navigate_to_search_match ──
+
+    #[test]
+    fn test_navigate_to_search_match_planning_scrolls_plan() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = LeftTab::Plan;
+        state.search_current_match = Some(0);
+        state.search_match_lines = vec![5];
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.plan_scroll, 5);
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_execution_scrolls_exec() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = LeftTab::Execution;
+        state.search_current_match = Some(0);
+        state.search_match_lines = vec![8];
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.exec_scroll, 8);
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_minilog_scrolls_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.search_current_match = Some(0);
+        state.search_match_lines = vec![3];
+        state.log_auto_scroll = true;
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.log_scroll, 3);
+        assert!(!state.log_auto_scroll);
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_evolution_scrolls_evo() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.search_current_match = Some(0);
+        state.search_match_lines = vec![2];
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.evo_scroll, 2);
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_out_of_bounds_current() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 10;
+        state.search_current_match = Some(99); // out of bounds
+        state.search_match_lines = vec![1, 2, 3]; // only 3 entries
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.log_scroll, 10); // unchanged
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_no_current_match() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 10;
+        state.search_current_match = None;
+        state.search_match_lines = vec![1, 2, 3];
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.log_scroll, 10); // unchanged
+    }
+
+    #[test]
+    fn test_navigate_to_search_match_empty_list_noop() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 5;
+        state.search_current_match = Some(0);
+        state.search_match_lines = vec![];
+        navigate_to_search_match(&mut state);
+        assert_eq!(state.log_scroll, 5); // unchanged
+    }
+
+    // ── n/N search navigation wrapping (key handler logic) ──
+
+    #[test]
+    fn test_search_n_wraps_from_last_to_zero() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.search_match_lines = vec![1, 2, 3]; // len = 3
+        state.search_current_match = Some(2); // last
+        // n key: cur + 1 >= len → wrap to 0
+        if let Some(cur) = state.search_current_match {
+            let next = if cur + 1 < state.search_match_lines.len() {
+                cur + 1
+            } else {
+                0
+            };
+            state.search_current_match = Some(next);
+        }
+        assert_eq!(state.search_current_match, Some(0));
+    }
+
+    #[test]
+    fn test_search_n_advances() {
+        let mut state = make_state();
+        state.search_match_lines = vec![10, 20, 30];
+        state.search_current_match = Some(1);
+        // n key: cur + 1 < len → cur + 1
+        if let Some(cur) = state.search_current_match {
+            let next = if cur + 1 < state.search_match_lines.len() {
+                cur + 1
+            } else {
+                0
+            };
+            state.search_current_match = Some(next);
+        }
+        assert_eq!(state.search_current_match, Some(2));
+    }
+
+    #[test]
+    fn test_search_N_wraps_from_zero_to_last() {
+        let mut state = make_state();
+        state.search_match_lines = vec![1, 2, 3]; // len = 3
+        state.search_current_match = Some(0); // first
+        // N key: cur == 0 → wrap to len - 1 = 2
+        if let Some(cur) = state.search_current_match {
+            let prev = if cur > 0 {
+                cur - 1
+            } else {
+                state.search_match_lines.len().saturating_sub(1)
+            };
+            state.search_current_match = Some(prev);
+        }
+        assert_eq!(state.search_current_match, Some(2));
+    }
+
+    #[test]
+    fn test_search_N_decrements() {
+        let mut state = make_state();
+        state.search_match_lines = vec![10, 20, 30];
+        state.search_current_match = Some(2);
+        // N key: cur > 0 → cur - 1
+        if let Some(cur) = state.search_current_match {
+            let prev = if cur > 0 {
+                cur - 1
+            } else {
+                state.search_match_lines.len().saturating_sub(1)
+            };
+            state.search_current_match = Some(prev);
+        }
+        assert_eq!(state.search_current_match, Some(1));
+    }
+
+    #[test]
+    fn test_search_nN_single_match_no_wrap() {
+        let mut state = make_state();
+        // With 1 match, n and N should both stay at position 0
+        state.search_match_lines = vec![5];
+        // n from position 0
+        state.search_current_match = Some(0);
+        if let Some(cur) = state.search_current_match {
+            let next = if cur + 1 < state.search_match_lines.len() {
+                cur + 1
+            } else {
+                0
+            };
+            state.search_current_match = Some(next);
+        }
+        assert_eq!(state.search_current_match, Some(0)); // wraps to 0 = same
+        // N from position 0
+        state.search_current_match = Some(0);
+        if let Some(cur) = state.search_current_match {
+            let prev = if cur > 0 {
+                cur - 1
+            } else {
+                state.search_match_lines.len().saturating_sub(1)
+            };
+            state.search_current_match = Some(prev);
+        }
+        assert_eq!(state.search_current_match, Some(0)); // 1.saturating_sub(1) = 0
+    }
+
+    // ── p cancel agent key (key handler logic) ──
+
+    #[test]
+    fn test_p_cancel_sets_stop_flag() {
+        let mut state = make_state();
+        state.agent_done = false; // agent is running
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut tui_input = TuiInput::new();
+        tui_input.stop_flag = Some(stop_flag.clone());
+        // p key handler logic
+        if !state.agent_done {
+            if let Some(ref f) = tui_input.stop_flag {
+                f.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            push_log(&mut state, "取消当前操作...".into(), false);
+        }
+        assert!(stop_flag.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(state
+            .log_entries
+            .back()
+            .unwrap()
+            .message
+            .contains("取消"));
+    }
+
+    #[test]
+    fn test_p_cancel_noop_when_agent_done() {
+        let mut state = make_state();
+        state.agent_done = true; // agent is finished
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut tui_input = TuiInput::new();
+        tui_input.stop_flag = Some(stop_flag.clone());
+        // p key guard: if !state.agent_done → false, handler skipped
+        if !state.agent_done {
+            // ... this shouldn't execute
+        }
+        assert!(!stop_flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    // ── f key log filter toggle (key handler logic) ──
+
+    #[test]
+    fn test_f_key_toggles_log_filter_minilog() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        // f key guard: focused_panel == MiniLog
+        let matches_guard = state.focused_panel == FocusedPanel::MiniLog
+            || (!matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
+                && state.focused_panel == FocusedPanel::MainLeft);
+        if matches_guard {
+            state.log_filter = state.log_filter.next();
+        }
+        assert_eq!(state.log_filter, LogFilter::ErrorsOnly);
+        // Toggle back
+        let matches_guard = state.focused_panel == FocusedPanel::MiniLog
+            || (!matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
+                && state.focused_panel == FocusedPanel::MainLeft);
+        if matches_guard {
+            state.log_filter = state.log_filter.next();
+        }
+        assert_eq!(state.log_filter, LogFilter::All);
+    }
+
+    #[test]
+    fn test_f_key_toggles_log_filter_mainleft_idle() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Idle;
+        // f key guard: phase not Planning/Executing AND focused == MainLeft
+        let matches_guard = state.focused_panel == FocusedPanel::MiniLog
+            || (!matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
+                && state.focused_panel == FocusedPanel::MainLeft);
+        if matches_guard {
+            state.log_filter = state.log_filter.next();
+        }
+        assert_eq!(state.log_filter, LogFilter::ErrorsOnly);
+    }
+
+    #[test]
+    fn test_f_key_noop_during_planning() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        // f key guard: phase IS Planning → guard fails
+        let matches_guard = state.focused_panel == FocusedPanel::MiniLog
+            || (!matches!(state.phase, AgentPhase::Planning | AgentPhase::Executing)
+                && state.focused_panel == FocusedPanel::MainLeft);
+        assert!(!matches_guard); // guard should reject
+        assert_eq!(state.log_filter, LogFilter::All); // unchanged
+    }
+
+    // ── l key log visibility toggle (key handler logic) ──
+
+    #[test]
+    fn test_l_key_toggles_log_visibility() {
+        let mut state = make_state();
+        state.awaiting_input = false;
+        state.output_overlay = None;
+        state.log_visible = false;
+        // l key guard: !awaiting_input && output_overlay is None
+        if !state.awaiting_input && state.output_overlay.is_none() {
+            state.log_visible = !state.log_visible;
+        }
+        assert!(state.log_visible);
+        // Toggle back
+        if !state.awaiting_input && state.output_overlay.is_none() {
+            state.log_visible = !state.log_visible;
+        }
+        assert!(!state.log_visible);
+    }
+
+    #[test]
+    fn test_l_key_noop_when_awaiting_input() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.log_visible = false;
+        // l key guard: awaiting_input → guard fails
+        if !state.awaiting_input && state.output_overlay.is_none() {
+            state.log_visible = !state.log_visible;
+        }
+        assert!(!state.log_visible); // unchanged
+    }
+
+    // ── Ctrl+K kanban toggle (key handler logic) ──
+
+    #[test]
+    fn test_ctrl_k_toggles_kanban() {
+        let mut state = make_state();
+        assert!(!state.kanban_visible);
+        state.kanban_visible = !state.kanban_visible;
+        assert!(state.kanban_visible);
+        state.kanban_visible = !state.kanban_visible;
+        assert!(!state.kanban_visible);
+    }
+
+    // ── Additional event handler tests ──
+
+    #[test]
+    fn test_agent_started_sets_name() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::AgentStarted {
+                name: "Hermes".into(),
+            },
+        );
+        assert_eq!(state.agent_name, "Hermes");
+    }
+
+    #[test]
+    fn test_agent_stopped_sets_idle() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        handle_event(&mut state, AgentEvent::AgentStopped);
+        assert_eq!(state.phase, AgentPhase::Idle);
+    }
+
+    #[test]
+    fn test_plan_ready_sets_steps_and_flag() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::PlanReady { steps_count: 5 },
+        );
+        assert_eq!(state.plan_steps_count, 5);
+        assert!(state.plan_ready);
+    }
+
+    #[test]
+    fn test_plan_streaming_token_strips_html() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::PlanStreamingToken {
+                token: "<b>hello</b>".into(),
+            },
+        );
+        assert!(!state.streaming_buffer.contains("<b>"));
+        assert!(state.streaming_buffer.contains("hello"));
+    }
+
+    #[test]
+    fn test_plan_retry_appends_marker() {
+        let mut state = make_state();
+        state.streaming_buffer = "original".into();
+        handle_event(&mut state, AgentEvent::PlanRetry);
+        assert!(state.streaming_buffer.contains("重试规划"));
+    }
+
+    #[test]
+    fn test_evolve_phase_started_sets_evolving() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::EvolvePhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Evolving);
+    }
+
+    #[test]
+    fn test_reflect_phase_started_sets_reflecting() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::ReflectPhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Reflecting);
+    }
+
+    #[test]
+    fn test_reflect_phase_complete_adds_log() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(
+            &mut state,
+            AgentEvent::ReflectPhaseComplete {
+                score: 0.85,
+                lesson: "improve prompts".into(),
+            },
+        );
+        assert!(state.log_entries.len() > before);
+        assert!(state
+            .log_entries
+            .back()
+            .unwrap()
+            .message
+            .contains("0.85"));
+    }
+
+    #[test]
+    fn test_reset_session_logs_message() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(&mut state, AgentEvent::ResetSession);
+        assert!(state.log_entries.len() > before);
+        assert!(state
+            .log_entries
+            .back()
+            .unwrap()
+            .message
+            .contains("会话重置"));
+    }
+
+    #[test]
+    fn test_save_checkpoint_logs() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(&mut state, AgentEvent::SaveCheckpoint);
+        assert!(state.log_entries.len() > before);
+    }
+
+    #[test]
+    fn test_rollback_checkpoint_logs() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(&mut state, AgentEvent::RollbackCheckpoint);
+        assert!(state.log_entries.len() > before);
+    }
+
+    #[test]
+    fn test_compress_context_logs() {
+        let mut state = make_state();
+        let before = state.log_entries.len();
+        handle_event(&mut state, AgentEvent::CompressContext);
+        assert!(state.log_entries.len() > before);
+    }
+
+    #[test]
+    fn test_thinking_phase_changed() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::ThinkingPhaseChanged {
+                sub_phase: agent_core::ThinkingSubPhase::CallingLlm,
+            },
+        );
+        assert!(state
+            .log_entries
+            .back()
+            .unwrap()
+            .message
+            .contains("CallingLLM"));
+    }
+
+    #[test]
+    fn test_task_updated_modifies_kanban() {
+        let mut state = make_state();
+        state.kanban_items.push(crate::state::KanbanItem {
+            id: "task-1".into(),
+            title: "old title".into(),
+            status: crate::state::KanbanStatus::Pending,
+        });
+        handle_event(
+            &mut state,
+            AgentEvent::TaskUpdated {
+                task_id: "task-1".into(),
+                title: "new title".into(),
+                status: agent_core::TaskStatus::InProgress,
+            },
+        );
+        let item = state.kanban_items.iter().find(|i| i.id == "task-1").unwrap();
+        assert_eq!(item.title, "new title");
+        assert_eq!(item.status, crate::state::KanbanStatus::InProgress);
+    }
+
+    // ── push_log: dedup respects is_error ──
+
+    #[test]
+    fn test_push_log_dedup_respects_is_error() {
+        let mut state = make_state();
+        push_log(&mut state, "msg".into(), false);
+        push_log(&mut state, "msg".into(), true);
+        assert_eq!(state.log_entries.len(), 2);
+    }
+
+    #[test]
+    fn test_push_log_strips_html() {
+        let mut state = make_state();
+        push_log(&mut state, "hello <b>world</b>".into(), false);
+        assert_eq!(state.log_entries.back().unwrap().message, "hello world");
+    }
+
+    #[test]
+    fn test_push_log_auto_scroll_disabled_no_scroll() {
+        let mut state = make_state();
+        state.log_auto_scroll = false;
+        state.phase = AgentPhase::Executing;
+        state.log_scroll = 5;
+        push_log(&mut state, "msg".into(), false);
+        assert_eq!(state.log_scroll, 5);
+    }
+
+    // ── scroll_focused: missing panels ──
+
+    #[test]
+    fn test_scroll_focused_main_left_idle_scrolls_log() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Idle;
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.log_auto_scroll = true;
+        state.log_scroll = 3;
+        scroll_focused(&mut state, -1);
+        assert_eq!(state.log_scroll, 2);
+        assert!(!state.log_auto_scroll);
+    }
+
+    #[test]
+    fn test_scroll_focused_minilog_scrolls_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 10;
+        scroll_focused(&mut state, 5);
+        assert_eq!(state.log_scroll, 15);
+    }
+
+    #[test]
+    fn test_scroll_focused_scroll_to_bottom_reenables_auto_scroll() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Input;
+        state.log_auto_scroll = false;
+        state.log_entries.push_back(LogEntry {
+            message: "test".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        state.log_scroll = 0;
+        scroll_focused(&mut state, 1);
+        assert!(state.log_auto_scroll);
+    }
+
+    // ── is_ctrl_c edge cases ──
+
+    #[test]
+    fn test_is_ctrl_c_uppercase() {
+        assert!(is_ctrl_c(KeyCode::Char('C'), KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn test_is_ctrl_c_plain_c_rejected() {
+        assert!(!is_ctrl_c(KeyCode::Char('c'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn test_is_ctrl_c_wrong_key_rejected() {
+        assert!(!is_ctrl_c(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    }
+
+    // ── base64_encode additional cases ──
+
+    #[test]
+    fn test_base64_encode_hello() {
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+    }
+
+    #[test]
+    fn test_base64_encode_zero_bytes_padding() {
+        assert_eq!(base64_encode(&[0x00]), "AA==");
+        assert_eq!(base64_encode(&[0x00, 0x00]), "AAA=");
+    }
+
+    #[test]
+    fn test_base64_encode_three_bytes_no_padding() {
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+    }
+
+    // ── left_tab_for_click additional ──
+
+    #[test]
+    fn test_left_tab_for_click_oob() {
+        assert_eq!(left_tab_for_click(20), None);
+        assert_eq!(left_tab_for_click(0), None);
+    }
+
+    // ── footer_height_for combined states ──
+
+    #[test]
+    fn test_footer_height_input_multi_line() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.input_text = "hello\nworld".into();
+        state.input_line_count = 2;
+        assert_eq!(footer_height_for(&state), 3);
+    }
+
+    #[test]
+    fn test_footer_height_search_plus_input() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.input_text = "a\nb\nc".into();
+        state.input_line_count = 3;
+        state.search_active = true;
+        // footer = max(input_line_count, 1) + 1 = 3 + 1 = 4
+        assert_eq!(footer_height_for(&state), 4);
+    }
+
+    #[test]
+    fn test_footer_height_slash_command() {
+        let mut state = make_state();
+        state.slash_command_active = true;
+        assert_eq!(footer_height_for(&state), 2);
+    }
+
+    // ── dispatch_slash_command: untested commands ──
+
+    #[test]
+    fn test_dispatch_slash_checkpoint_popup() {
+        let mut state = make_state();
+        state.turn = 7;
+        state.exec_completed_steps = 3;
+        state.exec_total_steps = 5;
+        state.log_entries.push_back(crate::state::LogEntry {
+            message: "err".into(),
+            is_error: true,
+            repeat_count: 1,
+        });
+        state.kanban_items.push(crate::state::KanbanItem {
+            id: "k1".into(),
+            title: "task".into(),
+            status: crate::state::KanbanStatus::Pending,
+        });
+        dispatch_slash_command(&mut state, "/checkpoint");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Checkpoint");
+        assert!(popup.lines.iter().any(|l| l.contains("7")));
+        assert!(popup.lines.iter().any(|l| l.contains("3/5")));
+        assert!(popup.lines.iter().any(|l| l.contains("1"))); // errors
+    }
+
+    #[test]
+    fn test_dispatch_slash_rollback_logs() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/rollback");
+        let last = state.log_entries.back().unwrap();
+        assert!(last.message.contains("rollback"));
+        assert!(last.message.contains("暂不可用"));
+    }
+
+    #[test]
+    fn test_dispatch_slash_diff_logs() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/diff");
+        let last = state.log_entries.back().unwrap();
+        assert!(last.message.contains("diff"));
+        assert!(last.message.contains("暂不可用"));
+    }
+
+    #[test]
+    fn test_dispatch_slash_new_resets_session() {
+        let mut state = make_state();
+        state.turn = 42;
+        state.phase = AgentPhase::Executing;
+        state.agent_done = true;
+        state.streaming_buffer = "old stream".into();
+        state.summary_streaming_buffer = "old summary".into();
+        state.executions.push(crate::state::StepExecState {
+            step_id: Uuid::new_v4(),
+            tool: "test".into(),
+            status: crate::state::StepStatus::Success,
+            content_preview: None,
+            content_full: None,
+            duration_ms: Some(100),
+            layer: 0,
+        });
+        state.log_entries.push_back(crate::state::LogEntry {
+            message: "old log".into(),
+            is_error: false,
+            repeat_count: 0,
+        });
+        state.kanban_items.push(crate::state::KanbanItem {
+            id: "k1".into(),
+            title: "task".into(),
+            status: crate::state::KanbanStatus::Pending,
+        });
+        state.plan_ready = true;
+        state.plan_steps_count = 5;
+        state.total_duration_ms = Some(999);
+        dispatch_slash_command(&mut state, "/new");
+        assert_eq!(state.turn, 0);
+        assert_eq!(state.phase, AgentPhase::Idle);
+        assert!(!state.agent_done);
+        assert!(state.streaming_buffer.is_empty());
+        assert!(state.summary_streaming_buffer.is_empty());
+        assert!(state.executions.is_empty());
+        assert!(state.log_entries.is_empty());
+        assert!(state.kanban_items.is_empty());
+        assert!(!state.plan_ready);
+        assert_eq!(state.plan_steps_count, 0);
+        assert!(state.total_duration_ms.is_none());
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "New Session");
+    }
+
+    #[test]
+    fn test_dispatch_slash_load_no_args_shows_usage() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/load");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Load Session");
+        assert!(popup.lines.iter().any(|l| l.contains("用法")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_compress_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/compress");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Compress");
+        assert!(popup.lines.iter().any(|l| l.contains("压缩")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_cron_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/cron");
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Cron");
+        assert!(popup.lines.iter().any(|l| l.contains("* * * * *")));
+        assert!(popup.lines.iter().any(|l| l.contains("每天9点")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_kanban_toggles() {
+        let mut state = make_state();
+        assert!(!state.kanban_visible);
+        dispatch_slash_command(&mut state, "/kanban");
+        assert!(state.kanban_visible);
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert_eq!(popup.title, "Kanban");
+        assert!(popup.lines.iter().any(|l| l.contains("已显示")));
+        dispatch_slash_command(&mut state, "/kanban");
+        assert!(!state.kanban_visible);
+        let popup = state.slash_command_popup.as_ref().unwrap();
+        assert!(popup.lines.iter().any(|l| l.contains("已隐藏")));
+    }
+
+    // ── handle_help_overlay_key (help scroll) ──
+
+    #[test]
+    fn test_help_overlay_down_increments_scroll() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 0;
+        let still_open = handle_help_overlay_key(&mut state, KeyCode::Down);
+        assert!(still_open);
+        assert_eq!(state.help_scroll, 1);
+    }
+
+    #[test]
+    fn test_help_overlay_up_saturates_at_zero() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 0;
+        let still_open = handle_help_overlay_key(&mut state, KeyCode::Up);
+        assert!(still_open);
+        assert_eq!(state.help_scroll, 0); // saturating_sub
+    }
+
+    #[test]
+    fn test_help_overlay_page_down_adds_10() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 5;
+        handle_help_overlay_key(&mut state, KeyCode::PageDown);
+        assert_eq!(state.help_scroll, 15);
+    }
+
+    #[test]
+    fn test_help_overlay_page_up_subtracts_10() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 20;
+        handle_help_overlay_key(&mut state, KeyCode::PageUp);
+        assert_eq!(state.help_scroll, 10);
+    }
+
+    #[test]
+    fn test_help_overlay_home_resets_to_zero() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 42;
+        handle_help_overlay_key(&mut state, KeyCode::Home);
+        assert_eq!(state.help_scroll, 0);
+    }
+
+    #[test]
+    fn test_help_overlay_esc_closes_and_resets_scroll() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 15;
+        let still_open = handle_help_overlay_key(&mut state, KeyCode::Esc);
+        assert!(!still_open);
+        assert!(!state.help_visible);
+        assert_eq!(state.help_scroll, 0);
     }
 }

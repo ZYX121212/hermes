@@ -33,7 +33,7 @@ fn empty() -> Line<'static> {
     Line::from(Span::styled("", Style::default().bg(theme::PANEL)))
 }
 
-pub fn render_help(frame: &mut Frame, area: Rect, _state: &TuiAppState) {
+pub fn render_help(frame: &mut Frame, area: Rect, state: &TuiAppState) {
     if area.width < 2 || area.height < 2 {
         return;
     }
@@ -60,7 +60,9 @@ pub fn render_help(frame: &mut Frame, area: Rect, _state: &TuiAppState) {
 
     let lines = vec![
         section("全局"),
-        entry(&["q", "Esc", "Ctrl+C"], "退出"),
+        entry(&["Esc"], "聚焦输入框 / 在输入框时退出"),
+        entry(&["q", "Ctrl+C"], "退出 (q 仅在 agent 空闲时)"),
+        entry(&["i"], "开始输入 (agent 空闲时)"),
         entry(&["h", "F1"], "帮助"),
         entry(&["s", "F2"], "设置面板 (LLM / 搜索 / 金融)"),
         entry(&["p"], "取消当前 agent 操作"),
@@ -74,10 +76,11 @@ pub fn render_help(frame: &mut Frame, area: Rect, _state: &TuiAppState) {
         entry(&["Home", "End"], "跳到顶部/底部"),
         entry(&["[", "]"], "调整左右分栏比例"),
         empty(),
-        section("输入模式"),
-        entry(&["Enter"], "提交任务"),
+        section("输入"),
+        entry(&["任意字符键"], "从任意面板直接开始输入 (agent 空闲时)"),
+        entry(&["Enter"], "提交任务 / 聚焦输入框"),
         entry(&["Shift+Enter"], "换行"),
-        entry(&["Esc"], "取消输入"),
+        entry(&["Esc"], "取消输入 / 回到输入框"),
         entry(&["←→"], "移动光标"),
         entry(&["Ctrl+W"], "向前删除一个词"),
         entry(&["Ctrl+U"], "删除到行首"),
@@ -85,8 +88,8 @@ pub fn render_help(frame: &mut Frame, area: Rect, _state: &TuiAppState) {
         empty(),
         section("搜索"),
         entry(&["/"], "进入搜索模式"),
-        entry(&["n", "N"], "下一个/上一个匹配"),
-        entry(&["Esc"], "退出搜索"),
+        entry(&["n", "N"], "下一个/上一个匹配 (退出搜索后可用)"),
+        entry(&["Esc"], "退出搜索 / 清除匹配"),
         empty(),
         section("日志面板"),
         entry(&["f"], "切换 All / Errors 过滤"),
@@ -117,6 +120,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, _state: &TuiAppState) {
 
     let para = Paragraph::new(lines)
         .block(block)
-        .style(Style::default().bg(theme::PANEL));
+        .style(Style::default().bg(theme::PANEL))
+        .scroll((state.help_scroll, 0));
     frame.render_widget(para, popup_area);
 }
