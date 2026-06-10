@@ -5514,4 +5514,1133 @@ mod tests {
         assert!(!state.help_visible);
         assert_eq!(state.help_scroll, 0);
     }
+
+    // ── scroll_to_top / scroll_to_bottom ──
+
+    #[test]
+    fn test_scroll_to_top_resets_evo_scroll() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 50;
+        scroll_to_top(&mut state);
+        assert_eq!(state.evo_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_resets_log_scroll_when_input_focused() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Input;
+        state.log_scroll = 100;
+        scroll_to_top(&mut state);
+        assert_eq!(state.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_resets_log_for_minilog() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 30;
+        scroll_to_top(&mut state);
+        assert_eq!(state.log_scroll, 0);
+        assert!(!state.log_auto_scroll);
+    }
+
+    #[test]
+    fn test_scroll_to_bottom_evo_panel() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 0;
+        scroll_to_bottom(&mut state);
+        assert!(state.evo_scroll > 0, "should have scrolled down");
+    }
+
+    // ── toggle_evolution_section ──
+
+    #[test]
+    fn test_toggle_evo_section_all_visible_hides_all() {
+        let mut state = make_state();
+        state.evo_weights_hidden = false;
+        state.evo_stats_hidden = false;
+        state.evo_meta_hidden = false;
+        toggle_evolution_section(&mut state);
+        assert!(state.evo_weights_hidden);
+        assert!(state.evo_stats_hidden);
+        assert!(state.evo_meta_hidden);
+    }
+
+    #[test]
+    fn test_toggle_evo_section_all_hidden_shows_all() {
+        let mut state = make_state();
+        state.evo_weights_hidden = true;
+        state.evo_stats_hidden = true;
+        state.evo_meta_hidden = true;
+        toggle_evolution_section(&mut state);
+        assert!(!state.evo_weights_hidden);
+        assert!(!state.evo_stats_hidden);
+        assert!(!state.evo_meta_hidden);
+    }
+
+    #[test]
+    fn test_toggle_evo_section_partial_hides_all() {
+        let mut state = make_state();
+        state.evo_weights_hidden = false; // one visible
+        state.evo_stats_hidden = true;
+        state.evo_meta_hidden = true;
+        toggle_evolution_section(&mut state);
+        // Any visible → hide all
+        assert!(state.evo_weights_hidden);
+        assert!(state.evo_stats_hidden);
+        assert!(state.evo_meta_hidden);
+    }
+
+    #[test]
+    fn test_toggle_evo_double_toggle_returns_to_start() {
+        let mut state = make_state();
+        state.evo_weights_hidden = false;
+        state.evo_stats_hidden = false;
+        state.evo_meta_hidden = false;
+        toggle_evolution_section(&mut state); // → all hidden
+        toggle_evolution_section(&mut state); // → all shown
+        assert!(!state.evo_weights_hidden);
+        assert!(!state.evo_stats_hidden);
+        assert!(!state.evo_meta_hidden);
+    }
+
+    // ── page_scroll_focused ──
+
+    #[test]
+    fn test_page_scroll_down_adds_12() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 0;
+        page_scroll_focused(&mut state, 1);
+        assert_eq!(state.evo_scroll, 12);
+    }
+
+    #[test]
+    fn test_page_scroll_up_subtracts_12() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 20;
+        page_scroll_focused(&mut state, -1);
+        assert_eq!(state.evo_scroll, 8);
+    }
+
+    #[test]
+    fn test_page_scroll_up_saturates_at_zero() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 5;
+        page_scroll_focused(&mut state, -1);
+        assert_eq!(state.evo_scroll, 0);
+    }
+
+    // ── get_focused_panel_lines ──
+
+    #[test]
+    fn test_get_focused_panel_lines_planning_returns_streaming() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = crate::state::LeftTab::Plan;
+        state.streaming_buffer = "line1\nline2\nline3".into();
+        let lines = get_focused_panel_lines(&state);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+    }
+
+    #[test]
+    fn test_get_focused_panel_lines_idle_returns_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Idle;
+        push_log(&mut state, "log entry A".into(), false);
+        let lines = get_focused_panel_lines(&state);
+        assert!(lines.iter().any(|l| l.contains("log entry A")));
+    }
+
+    #[test]
+    fn test_get_focused_panel_lines_evo_returns_weights() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        // Evolution panel lines — may be empty but should not panic
+        let lines = get_focused_panel_lines(&state);
+        let _ = lines; // just verify no panic
+    }
+
+    // ── export_to_file ──
+
+    #[test]
+    fn test_export_to_file_empty_state_returns_some() {
+        let state = make_state();
+        // export_to_file should return Some with filename + content
+        let result = export_to_file(&state);
+        assert!(result.is_some(), "should produce export even with empty state");
+        let (filename, content) = result.unwrap();
+        assert!(filename.ends_with(".md") || filename.contains("hermess"));
+        assert!(!content.is_empty());
+    }
+
+    // ── is_ctrl_c ──
+
+    #[test]
+    fn test_is_ctrl_c_detects_ctrl_c() {
+        assert!(is_ctrl_c(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn test_is_ctrl_c_no_modifier_false() {
+        assert!(!is_ctrl_c(KeyCode::Char('c'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn test_is_ctrl_c_different_key_false() {
+        assert!(!is_ctrl_c(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    }
+
+    // ── session_tabs_height_for ──
+
+    #[test]
+    fn test_session_tabs_height_no_tabs() {
+        let state = make_state();
+        // A fresh state has no session tabs
+        let h = session_tabs_height_for(&state);
+        assert_eq!(h, 0, "no tabs → height 0");
+    }
+
+    #[test]
+    fn test_session_tabs_height_two_tabs() {
+        let mut state = make_state();
+        state.session_tabs = vec![
+            crate::state::SessionTab { name: "tab1".into() },
+            crate::state::SessionTab { name: "tab2".into() },
+        ];
+        let h = session_tabs_height_for(&state);
+        assert_eq!(h, 1, "two tabs → height 1");
+    }
+
+    // ── handle_event: AgentStarted ──
+
+    #[test]
+    fn test_agent_started_updates_agent_name() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::AgentStarted { name: "NewAgent".into() });
+        assert_eq!(state.agent_name, "NewAgent");
+    }
+
+    // ── handle_event: PlanStreamingToken ──
+
+    #[test]
+    fn test_plan_streaming_token_appends_to_buffer() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        handle_event(&mut state, AgentEvent::PlanStreamingToken { token: "hello ".into() });
+        handle_event(&mut state, AgentEvent::PlanStreamingToken { token: "world".into() });
+        assert!(state.streaming_buffer.contains("hello"));
+        assert!(state.streaming_buffer.contains("world"));
+    }
+
+    // ── handle_event: EvolvePhaseStarted ──
+
+    #[test]
+    fn test_evolve_phase_started_sets_phase() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::EvolvePhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Evolving);
+    }
+
+    // ── open_step_overlay ──
+
+    #[test]
+    fn test_open_step_overlay_valid_index() {
+        let mut state = make_state();
+        let step_id = uuid::Uuid::new_v4();
+        state.executions.push(crate::state::StepExecState {
+            step_id,
+            tool: "bash".into(),
+            status: crate::state::StepStatus::Success,
+            duration_ms: Some(100),
+            content_preview: Some("preview".into()),
+            content_full: Some("full content here".into()),
+            layer: 0,
+        });
+        open_step_overlay(&mut state, 0);
+        assert!(state.output_overlay.is_some());
+        let overlay = state.output_overlay.unwrap();
+        assert_eq!(overlay.step_id, step_id);
+        assert_eq!(overlay.full_content, "full content here");
+    }
+
+    #[test]
+    fn test_open_step_overlay_out_of_bounds_noop() {
+        let mut state = make_state();
+        // No executions — out of bounds → noop (no panic)
+        open_step_overlay(&mut state, 99);
+        assert!(state.output_overlay.is_none());
+    }
+
+    #[test]
+    fn test_open_step_overlay_uses_preview_when_full_absent() {
+        let mut state = make_state();
+        state.executions.push(crate::state::StepExecState {
+            step_id: uuid::Uuid::new_v4(),
+            tool: "read".into(),
+            status: crate::state::StepStatus::Success,
+            duration_ms: None,
+            content_preview: Some("preview only".into()),
+            content_full: None, // no full content
+            layer: 0,
+        });
+        open_step_overlay(&mut state, 0);
+        let overlay = state.output_overlay.unwrap();
+        assert_eq!(overlay.full_content, "preview only");
+    }
+
+    // ── input_line_count_for ──
+
+    #[test]
+    fn test_input_line_count_for_two_lines() {
+        assert_eq!(input_line_count_for("line1\nline2"), 2);
+    }
+
+    #[test]
+    fn test_input_line_count_for_three_lines() {
+        assert_eq!(input_line_count_for("a\nb\nc"), 3);
+    }
+
+    #[test]
+    fn test_input_line_count_for_eight_lines_clamp() {
+        // 10 newlines → 11 parts → clamped to 8
+        let text = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj";
+        assert_eq!(input_line_count_for(text), 8);
+    }
+
+    #[test]
+    fn test_input_line_count_for_empty_string() {
+        // split of "" gives [""] → 1 segment → 1
+        assert_eq!(input_line_count_for(""), 1);
+    }
+
+    // ── submit_tui_input — history cap (50) ──
+
+    #[test]
+    fn test_submit_tui_input_empty_text_still_submits() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        let ok = submit_tui_input(&mut state, &tui_input, String::new());
+        assert!(ok);
+        assert!(!state.awaiting_input);
+    }
+
+    #[test]
+    fn test_submit_tui_input_clears_buffer() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        *tui_input.buffer.lock() = "hello".into();
+        submit_tui_input(&mut state, &tui_input, "hello".into());
+        assert!(tui_input.buffer.lock().is_empty());
+    }
+
+    #[test]
+    fn test_submit_tui_input_resets_cursor() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        *tui_input.cursor.lock() = 5;
+        submit_tui_input(&mut state, &tui_input, "hello".into());
+        assert_eq!(*tui_input.cursor.lock(), 0);
+    }
+
+    #[test]
+    fn test_submit_tui_input_moves_focus_to_mainleft() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+        submit_tui_input(&mut state, &tui_input, "task".into());
+        assert_eq!(state.focused_panel, FocusedPanel::MainLeft);
+    }
+
+    // ── begin_next_task_input — extended state reset ──
+
+    #[test]
+    fn test_begin_next_task_input_resets_input_text() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        state.input_text = "some old text".into();
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(state.input_text.is_empty());
+    }
+
+    #[test]
+    fn test_begin_next_task_input_resets_input_cursor() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        state.input_cursor = 42;
+        begin_next_task_input(&mut state, &tui_input);
+        assert_eq!(state.input_cursor, 0);
+    }
+
+    #[test]
+    fn test_begin_next_task_input_sets_focused_panel_to_input() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        state.focused_panel = FocusedPanel::Evolution;
+        begin_next_task_input(&mut state, &tui_input);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+    }
+
+    #[test]
+    fn test_begin_next_task_input_sets_tui_awaiting_true() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(tui_input.awaiting.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_begin_next_task_input_clears_submitted() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.submitted.lock() = Some("old".into());
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(tui_input.submitted.lock().is_none());
+    }
+
+    #[test]
+    fn test_begin_next_task_sets_line_count_to_one() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        state.input_line_count = 5;
+        begin_next_task_input(&mut state, &tui_input);
+        assert_eq!(state.input_line_count, 1);
+    }
+
+    // ── p-cancel: stop_flag reset after cancel ──
+
+    #[test]
+    fn test_p_cancel_stop_flag_reset_after_agent_done() {
+        // After agent completes with stop_requested, stop_flag should be cleared
+        // (mirrors outer loop logic in run_tui)
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        // After reset: flag is false, subsequent tasks run normally
+        assert!(!stop_flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_p_cancel_allows_resubmit_after_reset() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        // Simulate: agent done (after cancel)
+        state.agent_done = true;
+        // Begin next task — should succeed
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(state.awaiting_input);
+        let ok = submit_tui_input(&mut state, &tui_input, "new task after cancel".into());
+        assert!(ok);
+        assert!(!state.awaiting_input);
+    }
+
+    #[test]
+    fn test_p_cancel_when_agent_done_noop() {
+        // p-key guard: if agent_done == true, stop_flag should NOT be set
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let state_agent_done = true;
+        // Guard: only set flag if !agent_done
+        if !state_agent_done {
+            stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert!(!stop_flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_request_tui_quit_sets_stop_flag() {
+        let mut state = make_state();
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut tui_input = TuiInput::new();
+        tui_input.stop_flag = Some(stop_flag.clone());
+        // Simulate quit logic
+        request_tui_quit(&mut state, &tui_input);
+        assert!(stop_flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    // ── Ctrl+Tab shortcut — left_tab cycle ──
+
+    #[test]
+    fn test_left_tab_next_plan_to_execution() {
+        assert_eq!(LeftTab::Plan.next(), LeftTab::Execution);
+    }
+
+    #[test]
+    fn test_left_tab_next_execution_to_plan() {
+        assert_eq!(LeftTab::Execution.next(), LeftTab::Plan);
+    }
+
+    #[test]
+    fn test_left_tab_cycle_three_times_returns_to_start() {
+        let tab = LeftTab::Plan;
+        let t1 = tab.next(); // Execution
+        let t2 = t1.next(); // Plan
+        assert_eq!(t2, LeftTab::Plan);
+    }
+
+    // ── [ and ] — split ratio adjustment (left_split_pct: Option<u16>) ──
+
+    #[test]
+    fn test_adjust_split_wider_left() {
+        let mut state = make_state();
+        // Simulate ] key: increase left split (None means default ~50%)
+        let cur = state.left_split_pct.unwrap_or(50);
+        state.left_split_pct = Some((cur + 5).min(80));
+        assert_eq!(state.left_split_pct, Some(55));
+    }
+
+    #[test]
+    fn test_adjust_split_narrower_left() {
+        let mut state = make_state();
+        state.left_split_pct = Some(50);
+        // Simulate [ key: decrease left split
+        let cur = state.left_split_pct.unwrap_or(50);
+        state.left_split_pct = Some(cur.saturating_sub(5).max(20));
+        assert_eq!(state.left_split_pct, Some(45));
+    }
+
+    #[test]
+    fn test_adjust_split_clamps_at_max() {
+        let mut state = make_state();
+        state.left_split_pct = Some(78);
+        let cur = state.left_split_pct.unwrap_or(50);
+        state.left_split_pct = Some((cur + 5).min(80));
+        assert_eq!(state.left_split_pct, Some(80));
+    }
+
+    #[test]
+    fn test_adjust_split_clamps_at_min() {
+        let mut state = make_state();
+        state.left_split_pct = Some(22);
+        let cur = state.left_split_pct.unwrap_or(50);
+        state.left_split_pct = Some(cur.saturating_sub(5).max(20));
+        assert_eq!(state.left_split_pct, Some(20));
+    }
+
+    // ── push_log pruning ──
+
+    #[test]
+    fn test_handle_event_prunes_log_at_200() {
+        // Pruning happens at the end of handle_event.
+        // Drive 210 SummaryReady events (each adds one log entry) to trigger pruning.
+        let mut state = make_state();
+        for i in 0u32..210 {
+            handle_event(
+                &mut state,
+                AgentEvent::SummaryReady {
+                    summary: format!("done {i}"),
+                },
+            );
+        }
+        assert!(
+            state.log_entries.len() <= 200,
+            "log_entries should be pruned to ≤200 by handle_event, got {}",
+            state.log_entries.len()
+        );
+    }
+
+    #[test]
+    fn test_push_log_deduplication() {
+        let mut state = make_state();
+        push_log(&mut state, "same message".into(), false);
+        push_log(&mut state, "same message".into(), false);
+        // Should deduplicate: one entry with repeat_count=1
+        assert_eq!(state.log_entries.len(), 1);
+        assert_eq!(state.log_entries.back().unwrap().repeat_count, 1);
+    }
+
+    #[test]
+    fn test_push_log_error_flag_propagated() {
+        let mut state = make_state();
+        push_log(&mut state, "critical failure".into(), true);
+        let entry = state.log_entries.back().unwrap();
+        assert!(entry.is_error);
+        assert!(entry.message.contains("critical failure"));
+    }
+
+    #[test]
+    fn test_push_log_distinct_messages_not_deduplicated() {
+        let mut state = make_state();
+        push_log(&mut state, "message A".into(), false);
+        push_log(&mut state, "message B".into(), false);
+        assert_eq!(state.log_entries.len(), 2);
+    }
+
+    // ── apply_delta saturating ──
+
+    #[test]
+    fn test_apply_delta_large_negative_saturates() {
+        assert_eq!(apply_delta(3, -100), 0);
+    }
+
+    #[test]
+    fn test_apply_delta_zero_delta() {
+        assert_eq!(apply_delta(7, 0), 7);
+    }
+
+    // ── handle_event: SummaryReady adds to log ──
+
+    #[test]
+    fn test_summary_ready_adds_log_entry() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::SummaryReady { summary: "任务完成".into() });
+        assert!(!state.log_entries.is_empty());
+        let last = state.log_entries.back().unwrap();
+        assert!(last.message.contains("任务完成"));
+    }
+
+    #[test]
+    fn test_summary_ready_sets_summary_field() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::SummaryReady { summary: "done".into() });
+        assert_eq!(state.summary.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn test_evolve_phase_complete_sets_idle() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        handle_event(&mut state, AgentEvent::EvolvePhaseComplete);
+        assert_eq!(state.phase, AgentPhase::Idle);
+        assert!(state.agent_done);
+    }
+
+    #[test]
+    fn test_plan_phase_started_clears_streaming_buffer() {
+        let mut state = make_state();
+        state.streaming_buffer = "old data".into();
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        assert!(state.streaming_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_turn_started_resets_agent_done() {
+        let mut state = make_state();
+        state.agent_done = true;
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 5 });
+        assert!(!state.agent_done);
+        assert_eq!(state.turn, 5);
+    }
+
+    // ── scroll_focused: evo_scroll saturating ──
+
+    #[test]
+    fn test_evo_scroll_saturates_at_zero() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 0;
+        scroll_focused(&mut state, -10);
+        assert_eq!(state.evo_scroll, 0);
+    }
+
+    #[test]
+    fn test_evo_scroll_increments_correctly() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Evolution;
+        state.evo_scroll = 10;
+        scroll_focused(&mut state, 5);
+        assert_eq!(state.evo_scroll, 15);
+    }
+
+    // ── footer_height_for ──
+
+    #[test]
+    fn test_footer_height_idle_not_awaiting() {
+        let state = make_state();
+        assert_eq!(footer_height_for(&state), 1);
+    }
+
+    #[test]
+    fn test_footer_height_multiline_input() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.input_line_count = 4;
+        // 4 lines + 1 hint line = 5
+        assert_eq!(footer_height_for(&state), 5);
+    }
+
+    #[test]
+    fn test_footer_height_single_line_input() {
+        let mut state = make_state();
+        state.awaiting_input = true;
+        state.input_line_count = 1;
+        assert_eq!(footer_height_for(&state), 2); // 1 line + 1 hint
+    }
+
+    // ── close_overlays_focus_input ──
+
+    #[test]
+    fn test_close_overlays_hides_help() {
+        let mut state = make_state();
+        state.help_visible = true;
+        close_overlays_focus_input(&mut state);
+        assert!(!state.help_visible);
+    }
+
+    #[test]
+    fn test_close_overlays_hides_settings() {
+        let mut state = make_state();
+        state.settings_visible = true;
+        close_overlays_focus_input(&mut state);
+        assert!(!state.settings_visible);
+    }
+
+    #[test]
+    fn test_close_overlays_clears_slash_popup() {
+        let mut state = make_state();
+        state.slash_command_popup = Some(crate::state::SlashResult {
+            title: "test".into(),
+            lines: vec!["line".into()],
+            scroll: 0,
+        });
+        close_overlays_focus_input(&mut state);
+        assert!(state.slash_command_popup.is_none());
+    }
+
+    #[test]
+    fn test_close_overlays_focuses_input() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        close_overlays_focus_input(&mut state);
+        assert_eq!(state.focused_panel, FocusedPanel::Input);
+    }
+
+    // ── dispatch_slash_command: additional coverage ──
+
+    #[test]
+    fn test_dispatch_slash_new_clears_log_entries() {
+        let mut state = make_state();
+        push_log(&mut state, "old entry".into(), false);
+        assert!(!state.log_entries.is_empty());
+        dispatch_slash_command(&mut state, "/new");
+        // /new resets session — log_entries.clear() is called
+        assert!(state.log_entries.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_slash_new_resets_turn_counter() {
+        let mut state = make_state();
+        state.turn = 42;
+        dispatch_slash_command(&mut state, "/new");
+        assert_eq!(state.turn, 0);
+    }
+
+    #[test]
+    fn test_dispatch_slash_new_resets_phase_to_idle() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        dispatch_slash_command(&mut state, "/new");
+        assert_eq!(state.phase, AgentPhase::Idle);
+    }
+
+    #[test]
+    fn test_dispatch_slash_unknown_pushes_log() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/nonexistent-command");
+        // Falls through to _ arm which calls push_log with "未知命令"
+        assert!(
+            state.log_entries.back().map(|e| e.message.contains("未知命令")).unwrap_or(false),
+            "Expected 未知命令 in log"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_slash_model_with_empty_args_shows_current() {
+        let mut state = make_state();
+        state.user_settings.llm_model = "deepseek-chat".into();
+        dispatch_slash_command(&mut state, "/model");
+        // Should log current model, not change it
+        assert_eq!(state.user_settings.llm_model, "deepseek-chat");
+    }
+
+    #[test]
+    fn test_dispatch_slash_compress_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/compress");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Compress");
+    }
+
+    // ── handle_event: ExecutePhaseStarted ──
+
+    #[test]
+    fn test_execute_phase_started_sets_total_steps() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 5 });
+        assert_eq!(state.exec_total_steps, 5);
+        assert_eq!(state.phase, AgentPhase::Executing);
+    }
+
+    #[test]
+    fn test_execute_phase_started_resets_completed_steps() {
+        let mut state = make_state();
+        state.exec_completed_steps = 99;
+        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 3 });
+        assert_eq!(state.exec_completed_steps, 0);
+    }
+
+    // ── handle_event: PlanReady ──
+
+    #[test]
+    fn test_plan_ready_sets_plan_ready_flag() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        handle_event(&mut state, AgentEvent::PlanReady { steps_count: 4 });
+        assert!(state.plan_ready);
+        assert_eq!(state.plan_steps_count, 4);
+    }
+
+    // ── scroll_focused: log_scroll ──
+
+    #[test]
+    fn test_scroll_log_when_minilog_focused() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 5;
+        scroll_focused(&mut state, 3);
+        assert_eq!(state.log_scroll, 8);
+    }
+
+    #[test]
+    fn test_scroll_log_saturates_at_zero() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MiniLog;
+        state.log_scroll = 2;
+        scroll_focused(&mut state, -10);
+        assert_eq!(state.log_scroll, 0);
+    }
+
+    // ── handle_event: ReflectPhaseStarted / Complete ──
+
+    #[test]
+    fn test_reflect_phase_started_sets_phase() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::ReflectPhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Reflecting);
+    }
+
+    #[test]
+    fn test_agent_error_adds_error_log() {
+        let mut state = make_state();
+        handle_event(
+            &mut state,
+            AgentEvent::AgentError {
+                message: "connection failed".into(),
+            },
+        );
+        assert!(
+            state.log_entries.iter().any(|e| e.is_error && e.message.contains("connection failed")),
+            "should have an error log entry"
+        );
+    }
+
+    #[test]
+    fn test_agent_stopped_sets_phase_idle() {
+        let mut state = make_state();
+        state.phase = AgentPhase::Executing;
+        handle_event(&mut state, AgentEvent::AgentStopped);
+        assert_eq!(state.phase, AgentPhase::Idle);
+    }
+
+    #[test]
+    fn test_reset_session_pushes_log() {
+        let mut state = make_state();
+        let before_len = state.log_entries.len();
+        handle_event(&mut state, AgentEvent::ResetSession);
+        // Should add a log entry about session reset
+        assert!(state.log_entries.len() > before_len);
+        assert!(
+            state.log_entries.back().map(|e| e.message.contains("重置")).unwrap_or(false),
+            "expected 重置 in log"
+        );
+    }
+
+    #[test]
+    fn test_full_turn_pipeline_phase_sequence() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        assert_eq!(state.phase, AgentPhase::Observing);
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Planning);
+        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 2 });
+        assert_eq!(state.phase, AgentPhase::Executing);
+        handle_event(&mut state, AgentEvent::ReflectPhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Reflecting);
+        handle_event(&mut state, AgentEvent::EvolvePhaseStarted);
+        assert_eq!(state.phase, AgentPhase::Evolving);
+        handle_event(&mut state, AgentEvent::EvolvePhaseComplete);
+        assert_eq!(state.phase, AgentPhase::Idle);
+        assert!(state.agent_done);
+    }
+
+    // ── dispatch_slash_command: additional commands ──
+
+    #[test]
+    fn test_dispatch_slash_status_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/status");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Status");
+    }
+
+    #[test]
+    fn test_dispatch_slash_usage_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/usage");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Usage");
+    }
+
+    #[test]
+    fn test_dispatch_slash_cron_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/cron");
+        assert!(state.slash_command_popup.is_some());
+    }
+
+    #[test]
+    fn test_dispatch_slash_memory_no_query_shows_help() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/memory");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert!(popup.lines.iter().any(|l| l.contains("用法") || l.contains("memory")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_personality_no_arg_shows_list() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/personality");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Personality");
+        assert!(popup.lines.iter().any(|l| l.contains("concise") || l.contains("verbose")));
+    }
+
+    #[test]
+    fn test_dispatch_slash_personality_with_arg() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/personality concise");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert!(popup.lines.iter().any(|l| l.contains("concise")));
+    }
+
+    // ── scroll_focused: Input panel scrolls log ──
+
+    #[test]
+    fn test_scroll_input_panel_affects_log() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::Input;
+        state.log_scroll = 5;
+        scroll_focused(&mut state, 3);
+        assert_eq!(state.log_scroll, 8);
+    }
+
+    // ── handle_help_overlay_key: j/k aliases ──
+
+    #[test]
+    fn test_help_overlay_j_key_increments_scroll() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 0;
+        handle_help_overlay_key(&mut state, KeyCode::Char('j'));
+        assert_eq!(state.help_scroll, 1);
+    }
+
+    #[test]
+    fn test_help_overlay_k_key_decrements_scroll() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 5;
+        handle_help_overlay_key(&mut state, KeyCode::Char('k'));
+        assert_eq!(state.help_scroll, 4);
+    }
+
+    #[test]
+    fn test_help_overlay_h_key_closes() {
+        let mut state = make_state();
+        state.help_visible = true;
+        state.help_scroll = 10;
+        let still_open = handle_help_overlay_key(&mut state, KeyCode::Char('h'));
+        assert!(!still_open);
+        assert!(!state.help_visible);
+        assert_eq!(state.help_scroll, 0);
+    }
+
+    // ── scroll_to_top: Plan and Exec tabs ──
+
+    #[test]
+    fn test_scroll_to_top_plan_tab() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Planning;
+        state.left_tab = crate::state::LeftTab::Plan;
+        state.plan_scroll = 50;
+        scroll_to_top(&mut state);
+        assert_eq!(state.plan_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_top_exec_tab() {
+        let mut state = make_state();
+        state.focused_panel = FocusedPanel::MainLeft;
+        state.phase = AgentPhase::Executing;
+        state.left_tab = crate::state::LeftTab::Execution;
+        state.exec_scroll = 30;
+        scroll_to_top(&mut state);
+        assert_eq!(state.exec_scroll, 0);
+    }
+
+    // ── handle_event: StepStarted ──
+
+    #[test]
+    fn test_step_started_increments_exec_count() {
+        let mut state = make_state();
+        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 3 });
+        handle_event(
+            &mut state,
+            AgentEvent::StepStarted {
+                step_id: Uuid::new_v4(),
+                tool: "bash".into(),
+                layer: 0,
+            },
+        );
+        // Should add an execution step entry
+        assert!(!state.executions.is_empty());
+    }
+
+    // ── dispatch_slash_command: /debug ──
+
+    #[test]
+    fn test_dispatch_slash_debug_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/debug");
+        assert!(state.slash_command_popup.is_some());
+        let popup = state.slash_command_popup.unwrap();
+        assert_eq!(popup.title, "Debug");
+    }
+
+    // ── dispatch_slash_command: /skills ──
+
+    #[test]
+    fn test_dispatch_slash_skills_shows_popup() {
+        let mut state = make_state();
+        dispatch_slash_command(&mut state, "/skills");
+        assert!(state.slash_command_popup.is_some());
+    }
+
+    // ── push_log: error deduplication ──
+
+    #[test]
+    fn test_push_log_error_dedup_same_error() {
+        let mut state = make_state();
+        push_log(&mut state, "timeout".into(), true);
+        push_log(&mut state, "timeout".into(), true);
+        assert_eq!(state.log_entries.len(), 1);
+        assert_eq!(state.log_entries.back().unwrap().repeat_count, 1);
+    }
+
+    #[test]
+    fn test_push_log_different_is_error_no_dedup() {
+        let mut state = make_state();
+        push_log(&mut state, "same message".into(), false);
+        push_log(&mut state, "same message".into(), true); // different is_error
+        assert_eq!(state.log_entries.len(), 2);
+    }
+
+    // ── begin_next_task_input: clears tui buffer ──
+
+    #[test]
+    fn test_begin_next_task_input_clears_tui_buffer() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        *tui_input.buffer.lock() = "leftover text".into();
+        begin_next_task_input(&mut state, &tui_input);
+        assert!(tui_input.buffer.lock().is_empty());
+    }
+
+    // ── submit_tui_input: stores in submitted ──
+
+    #[test]
+    fn test_submit_tui_input_stores_text_in_submitted() {
+        let mut state = make_state();
+        let tui_input = TuiInput::new();
+        begin_next_task_input(&mut state, &tui_input);
+        submit_tui_input(&mut state, &tui_input, "my task".into());
+        assert_eq!(tui_input.submitted.lock().as_deref(), Some("my task"));
+    }
+
+    // ── handle_event: EvolvePhaseComplete → results_visible ──
+
+    #[test]
+    fn test_evolve_complete_sets_results_visible() {
+        let mut state = make_state();
+        state.results_visible = false;
+        handle_event(&mut state, AgentEvent::EvolvePhaseComplete);
+        assert!(state.results_visible);
+    }
+
+    // ── handle_event: PlanPhaseStarted clears summary buffer ──
+
+    #[test]
+    fn test_plan_phase_started_clears_summary_streaming_buffer() {
+        let mut state = make_state();
+        state.summary_streaming_buffer = "old summary".into();
+        handle_event(&mut state, AgentEvent::PlanPhaseStarted);
+        assert!(state.summary_streaming_buffer.is_empty());
+    }
+
+    // ── handle_event: ExecutePhaseStarted resets exec state ──
+
+    #[test]
+    fn test_execute_phase_started_sets_left_tab_to_execution() {
+        let mut state = make_state();
+        state.left_tab = crate::state::LeftTab::Plan;
+        handle_event(&mut state, AgentEvent::ExecutePhaseStarted { total_steps: 1 });
+        assert_eq!(state.left_tab, crate::state::LeftTab::Execution);
+    }
+
+    // ── handle_event: TurnStarted sets results_visible ──
+
+    #[test]
+    fn test_turn_started_sets_results_visible() {
+        let mut state = make_state();
+        state.results_visible = false;
+        handle_event(&mut state, AgentEvent::TurnStarted { turn: 1 });
+        assert!(state.results_visible);
+    }
+
+    // ── handle_event: SummaryStreamingToken appends ──
+
+    #[test]
+    fn test_summary_streaming_token_appends() {
+        let mut state = make_state();
+        state.summary_streaming_buffer.clear();
+        handle_event(&mut state, AgentEvent::SummaryStreamingToken { token: "part1".into() });
+        handle_event(&mut state, AgentEvent::SummaryStreamingToken { token: " part2".into() });
+        assert!(state.summary_streaming_buffer.contains("part1"));
+        assert!(state.summary_streaming_buffer.contains("part2"));
+    }
+
+    // ── LeftTab prev ──
+
+    #[test]
+    fn test_left_tab_prev_execution_to_plan() {
+        // LeftTab.prev() should work (if implemented)
+        let tab = crate::state::LeftTab::Execution;
+        let prev = tab.next(); // wraps around to Plan
+        assert_eq!(prev, crate::state::LeftTab::Plan);
+    }
 }

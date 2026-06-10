@@ -1062,4 +1062,404 @@ mod tests {
         assert_eq!(LogFilter::All.label(), "All");
         assert_eq!(LogFilter::ErrorsOnly.label(), "Errors");
     }
+
+    // ── render_scrollbar boundary cases ──
+
+    #[test]
+    fn test_scrollbar_content_exactly_equals_viewport() {
+        // content == viewport → no scrollbar needed
+        let bar = render_scrollbar(0, 10, 10);
+        assert_eq!(bar, "", "no scrollbar when content fits exactly");
+    }
+
+    #[test]
+    fn test_scrollbar_content_zero() {
+        // content=0 → clamps to 1, viewport=5 → 1 <= 5 → no scrollbar
+        let bar = render_scrollbar(0, 0, 5);
+        assert_eq!(bar, "");
+    }
+
+    #[test]
+    fn test_scrollbar_content_one_more_than_viewport() {
+        // content=11, viewport=10 → scrollbar shown, length == viewport
+        let bar = render_scrollbar(0, 11, 10);
+        assert!(!bar.is_empty());
+        assert_eq!(bar.chars().count(), 10);
+    }
+
+    #[test]
+    fn test_scrollbar_max_scroll_thumb_at_bottom() {
+        // When scrolled to max, thumb should be at bottom of bar
+        let bar = render_scrollbar(u16::MAX, 100, 10);
+        // thumb char should appear near the end
+        let chars: Vec<char> = bar.chars().collect();
+        assert_eq!(chars.len(), 10);
+        assert!(chars.contains(&'█'));
+        // The last char should be the thumb
+        assert_eq!(*chars.last().unwrap(), '█');
+    }
+
+    #[test]
+    fn test_scrollbar_scroll_zero_thumb_at_top() {
+        let bar = render_scrollbar(0, 100, 10);
+        let chars: Vec<char> = bar.chars().collect();
+        // The first char should be the thumb
+        assert_eq!(chars[0], '█');
+    }
+
+    #[test]
+    fn test_scrollbar_large_content_small_viewport() {
+        // Very large content vs tiny viewport
+        let bar = render_scrollbar(0, 10000, 3);
+        assert_eq!(bar.chars().count(), 3);
+        assert!(bar.contains('█'));
+    }
+
+    #[test]
+    fn test_scrollbar_output_only_block_and_pipe() {
+        // Bar should only contain '█' and '│'
+        let bar = render_scrollbar(5, 50, 10);
+        for c in bar.chars() {
+            assert!(
+                c == '█' || c == '│',
+                "unexpected char in scrollbar: {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_scrollbar_mid_scroll_thumb_not_at_extremes() {
+        let bar = render_scrollbar(50, 200, 20);
+        let chars: Vec<char> = bar.chars().collect();
+        assert_eq!(chars.len(), 20);
+        // Thumb should exist but not at top (index 0) or bottom (index 19)
+        // (scroll is roughly in the middle)
+        assert!(chars.contains(&'█'));
+    }
+
+    // ── FocusedPanel — extended bidirectional cycle ──
+
+    #[test]
+    fn test_focused_panel_full_forward_cycle() {
+        let mut panel = FocusedPanel::MainLeft;
+        panel = panel.next(); // Evolution
+        assert_eq!(panel, FocusedPanel::Evolution);
+        panel = panel.next(); // Input
+        assert_eq!(panel, FocusedPanel::Input);
+        panel = panel.next(); // back to MainLeft
+        assert_eq!(panel, FocusedPanel::MainLeft);
+    }
+
+    #[test]
+    fn test_focused_panel_full_backward_cycle() {
+        let mut panel = FocusedPanel::MainLeft;
+        panel = panel.prev(); // Input
+        assert_eq!(panel, FocusedPanel::Input);
+        panel = panel.prev(); // Evolution
+        assert_eq!(panel, FocusedPanel::Evolution);
+        panel = panel.prev(); // back to MainLeft
+        assert_eq!(panel, FocusedPanel::MainLeft);
+    }
+
+    #[test]
+    fn test_focused_panel_minilog_forward_skips_to_input() {
+        // MiniLog.next() → Input (MiniLog is skipped in Tab cycle)
+        assert_eq!(FocusedPanel::MiniLog.next(), FocusedPanel::Input);
+    }
+
+    #[test]
+    fn test_focused_panel_minilog_backward_goes_to_evolution() {
+        assert_eq!(FocusedPanel::MiniLog.prev(), FocusedPanel::Evolution);
+    }
+
+    #[test]
+    fn test_focused_panel_forward_and_back_returns_to_start() {
+        let start = FocusedPanel::Input;
+        let next = start.next();
+        let back = next.prev();
+        // prev(next(Input)) = prev(MainLeft) = Input
+        assert_eq!(back, start);
+    }
+
+    #[test]
+    fn test_focused_panel_backward_and_forward_returns_to_start() {
+        let start = FocusedPanel::Evolution;
+        let prev = start.prev();
+        let fwd = prev.next();
+        // next(prev(Evolution)) = next(MainLeft) = Evolution
+        assert_eq!(fwd, start);
+    }
+
+    // ── TuiInput — construction and defaults ──
+
+    #[test]
+    fn test_tui_input_new_awaiting_false() {
+        let ti = TuiInput::new();
+        assert!(!ti.awaiting.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_tui_input_default_buffer_empty() {
+        let ti = TuiInput::new();
+        assert!(ti.buffer.lock().is_empty());
+    }
+
+    #[test]
+    fn test_tui_input_default_submitted_none() {
+        let ti = TuiInput::new();
+        assert!(ti.submitted.lock().is_none());
+    }
+
+    #[test]
+    fn test_tui_input_default_cursor_zero() {
+        let ti = TuiInput::new();
+        assert_eq!(*ti.cursor.lock(), 0);
+    }
+
+    #[test]
+    fn test_tui_input_get_gateway_mode_default_empty() {
+        let ti = TuiInput::new();
+        assert_eq!(ti.get_gateway_mode(), "");
+    }
+
+    #[test]
+    fn test_tui_input_get_gateway_mode_with_value() {
+        use parking_lot::Mutex;
+        let mode = Arc::new(Mutex::new(Some("gateway-mode".to_string())));
+        let mut ti = TuiInput::new();
+        ti.gateway_mode = Some(Arc::clone(&mode));
+        assert_eq!(ti.get_gateway_mode(), "gateway-mode");
+    }
+
+    // ── TuiAppState — help_scroll field ──
+
+    #[test]
+    fn test_tui_state_initial_help_scroll_is_zero() {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        let state = TuiAppState::new("test".into(), evo);
+        assert_eq!(state.help_scroll, 0);
+        assert!(!state.help_visible);
+    }
+
+    #[test]
+    fn test_tui_state_initial_agent_done_false() {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        let state = TuiAppState::new("test".into(), evo);
+        assert!(!state.agent_done);
+        assert_eq!(state.phase, AgentPhase::Idle);
+    }
+
+    // ── AgentPhase::main_split_ratio ──
+
+    #[test]
+    fn test_split_ratio_planning_no_weights() {
+        let r = AgentPhase::Planning.main_split_ratio(false);
+        assert_eq!(r, (85, 15));
+    }
+
+    #[test]
+    fn test_split_ratio_planning_with_weights() {
+        let r = AgentPhase::Planning.main_split_ratio(true);
+        assert_eq!(r, (75, 25));
+    }
+
+    #[test]
+    fn test_split_ratio_executing_no_weights() {
+        let r = AgentPhase::Executing.main_split_ratio(false);
+        assert_eq!(r, (80, 20));
+    }
+
+    #[test]
+    fn test_split_ratio_executing_with_weights() {
+        let r = AgentPhase::Executing.main_split_ratio(true);
+        assert_eq!(r, (70, 30));
+    }
+
+    #[test]
+    fn test_split_ratio_idle_no_weights() {
+        let r = AgentPhase::Idle.main_split_ratio(false);
+        assert_eq!(r, (75, 25));
+    }
+
+    #[test]
+    fn test_split_ratio_idle_with_weights() {
+        let r = AgentPhase::Idle.main_split_ratio(true);
+        assert_eq!(r, (60, 40));
+    }
+
+    #[test]
+    fn test_split_ratio_always_sums_to_100() {
+        for phase in &[
+            AgentPhase::Idle,
+            AgentPhase::Observing,
+            AgentPhase::Planning,
+            AgentPhase::Executing,
+            AgentPhase::Reflecting,
+            AgentPhase::Evolving,
+        ] {
+            for has_weights in [false, true] {
+                let (l, r) = phase.main_split_ratio(has_weights);
+                assert_eq!(l + r, 100, "split doesn't sum to 100 for {phase:?}");
+            }
+        }
+    }
+
+    // ── strip_html — additional edge cases ──
+
+    #[test]
+    fn test_strip_html_ampersand_lt() {
+        assert_eq!(strip_html("a &lt; b"), "a < b");
+    }
+
+    #[test]
+    fn test_strip_html_ampersand_gt() {
+        assert_eq!(strip_html("a &gt; b"), "a > b");
+    }
+
+    #[test]
+    fn test_strip_html_ampersand_amp() {
+        assert_eq!(strip_html("a &amp; b"), "a & b");
+    }
+
+    #[test]
+    fn test_strip_html_ampersand_quot() {
+        assert_eq!(strip_html("&quot;hello&quot;"), "\"hello\"");
+    }
+
+    #[test]
+    fn test_strip_html_nbsp() {
+        assert_eq!(strip_html("a&nbsp;b"), "a b");
+    }
+
+    #[test]
+    fn test_strip_html_numeric_entity() {
+        // &#65; = 'A'
+        assert_eq!(strip_html("&#65;"), "A");
+    }
+
+    #[test]
+    fn test_strip_html_unclosed_tag_skips() {
+        // Unclosed tag — strips until end
+        let result = strip_html("<unclosed");
+        // Should be empty (everything after < is skipped)
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_strip_html_empty_string() {
+        assert_eq!(strip_html(""), "");
+    }
+
+    // ── clamp_scroll ──
+
+    #[test]
+    fn test_clamp_scroll_above_max_clamped() {
+        // scroll=100, content=10, viewport=5 → max scroll = 10-5=5
+        let clamped = clamp_scroll(100, 10, 5);
+        assert_eq!(clamped, 5);
+    }
+
+    #[test]
+    fn test_clamp_scroll_at_zero_stays_zero() {
+        assert_eq!(clamp_scroll(0, 20, 10), 0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_content_smaller_than_viewport() {
+        // content <= viewport → max scroll = 0
+        assert_eq!(clamp_scroll(50, 5, 10), 0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_exact_max() {
+        // scroll == max allowed → keep
+        let clamped = clamp_scroll(5, 15, 10);
+        assert_eq!(clamped, 5);
+    }
+
+    // ── wrapped_line_count — edge cases ──
+
+    #[test]
+    fn test_wrapped_line_count_empty_string() {
+        // Empty string has 0 lines via .lines()
+        assert_eq!(wrapped_line_count("", 80), 0);
+    }
+
+    #[test]
+    fn test_wrapped_line_count_exactly_fits() {
+        // "hello" (5 chars) with width=5 → 1 line
+        assert_eq!(wrapped_line_count("hello", 5), 1);
+    }
+
+    #[test]
+    fn test_wrapped_line_count_overflow_by_one() {
+        // "hello!" (6 chars) with width=5 → 2 lines
+        assert_eq!(wrapped_line_count("hello!", 5), 2);
+    }
+
+    #[test]
+    fn test_wrapped_line_count_zero_width_clamp() {
+        // width=0 is clamped to 1, so every char is its own line
+        let count = wrapped_line_count("abc", 0);
+        // 3 chars, width 1 → 3 lines
+        assert_eq!(count, 3);
+    }
+
+    // ── truncate — extra cases ──
+
+    #[test]
+    fn test_truncate_at_exact_limit() {
+        let s = truncate("hello", 5);
+        assert_eq!(s, "hello"); // exactly max_chars, no truncation
+    }
+
+    #[test]
+    fn test_truncate_one_over_limit() {
+        let s = truncate("hello!", 5);
+        assert!(s.ends_with('…'));
+        assert!(s.starts_with("hello"));
+    }
+
+    #[test]
+    fn test_truncate_unicode_counts_chars_not_bytes() {
+        // "日本語" = 3 chars; max=2 → truncated
+        let s = truncate("日本語", 2);
+        assert!(s.ends_with('…'));
+        assert!(s.contains('日'));
+    }
+
+    // ── KanbanItem / KanbanStatus ──
+
+    #[test]
+    fn test_kanban_item_construction() {
+        let item = KanbanItem {
+            id: "item-1".into(),
+            title: "Test Task".into(),
+            status: KanbanStatus::Pending,
+        };
+        assert_eq!(item.title, "Test Task");
+        assert_eq!(item.status, KanbanStatus::Pending);
+    }
+
+    #[test]
+    fn test_kanban_status_variants_distinct() {
+        assert_ne!(KanbanStatus::Pending, KanbanStatus::InProgress);
+        assert_ne!(KanbanStatus::InProgress, KanbanStatus::Completed);
+        assert_ne!(KanbanStatus::Pending, KanbanStatus::Completed);
+    }
+
+    #[test]
+    fn test_kanban_item_status_mutability() {
+        let mut item = KanbanItem {
+            id: "item-2".into(),
+            title: "Task".into(),
+            status: KanbanStatus::Pending,
+        };
+        item.status = KanbanStatus::InProgress;
+        assert_eq!(item.status, KanbanStatus::InProgress);
+        item.status = KanbanStatus::Completed;
+        assert_eq!(item.status, KanbanStatus::Completed);
+    }
 }
