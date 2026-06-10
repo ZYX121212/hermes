@@ -103,6 +103,7 @@ fn parse_key(s: &str) -> Option<KeyDesc> {
         "y" => KeyCode::Char('y'),
         "t" => KeyCode::Char('t'),
         "o" => KeyCode::Char('o'),
+        // SAFETY: pattern guard `other.len() == 1` ensures exactly one char exists.
         other if other.len() == 1 => KeyCode::Char(other.chars().next().unwrap()),
         _ => return None,
     };
@@ -252,5 +253,260 @@ impl KeyBindings {
             lines.push(format!("{} = \"{}\"", name, key));
         }
         std::fs::write(path, lines.join("\n") + "\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // ── parse_key ──
+
+    #[test]
+    fn test_parse_key_simple_chars() {
+        assert!(parse_key("a").is_some());
+        assert!(parse_key("?").is_some());
+        assert!(parse_key("/").is_some());
+        assert!(parse_key(":").is_some());
+    }
+
+    #[test]
+    fn test_parse_key_return_none_for_unknown() {
+        assert!(parse_key("unknown_long_key").is_none());
+        assert!(parse_key("").is_none());
+    }
+
+    #[test]
+    fn test_parse_key_ctrl_modifier() {
+        let desc = parse_key("Ctrl+c").unwrap();
+        assert_eq!(desc.code, KeyCode::Char('c'));
+        assert!(desc.modifiers.contains(KeyModifiers::CONTROL));
+
+        let desc = parse_key("Control+x").unwrap();
+        assert_eq!(desc.code, KeyCode::Char('x'));
+        assert!(desc.modifiers.contains(KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn test_parse_key_shift_modifier() {
+        let desc = parse_key("Shift+Enter").unwrap();
+        assert_eq!(desc.code, KeyCode::Enter);
+        assert!(desc.modifiers.contains(KeyModifiers::SHIFT));
+    }
+
+    #[test]
+    fn test_parse_key_alt_modifier() {
+        let desc = parse_key("Alt+Enter").unwrap();
+        assert_eq!(desc.code, KeyCode::Enter);
+        assert!(desc.modifiers.contains(KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn test_parse_key_special_keys() {
+        assert_eq!(parse_key("Enter").unwrap().code, KeyCode::Enter);
+        assert_eq!(parse_key("Return").unwrap().code, KeyCode::Enter);
+        assert_eq!(parse_key("Tab").unwrap().code, KeyCode::Tab);
+        assert_eq!(parse_key("Escape").unwrap().code, KeyCode::Esc);
+        assert_eq!(parse_key("Esc").unwrap().code, KeyCode::Esc);
+        assert_eq!(parse_key("Backspace").unwrap().code, KeyCode::Backspace);
+        assert_eq!(parse_key("Delete").unwrap().code, KeyCode::Delete);
+        assert_eq!(parse_key("Del").unwrap().code, KeyCode::Delete);
+        assert_eq!(parse_key("Insert").unwrap().code, KeyCode::Insert);
+    }
+
+    #[test]
+    fn test_parse_key_navigation() {
+        assert_eq!(parse_key("Up").unwrap().code, KeyCode::Up);
+        assert_eq!(parse_key("Down").unwrap().code, KeyCode::Down);
+        assert_eq!(parse_key("Left").unwrap().code, KeyCode::Left);
+        assert_eq!(parse_key("Right").unwrap().code, KeyCode::Right);
+        assert_eq!(parse_key("Home").unwrap().code, KeyCode::Home);
+        assert_eq!(parse_key("End").unwrap().code, KeyCode::End);
+        assert_eq!(parse_key("PageUp").unwrap().code, KeyCode::PageUp);
+        assert_eq!(parse_key("PgUp").unwrap().code, KeyCode::PageUp);
+        assert_eq!(parse_key("PageDown").unwrap().code, KeyCode::PageDown);
+        assert_eq!(parse_key("PgDn").unwrap().code, KeyCode::PageDown);
+        assert_eq!(parse_key("BackTab").unwrap().code, KeyCode::BackTab);
+    }
+
+    #[test]
+    fn test_parse_key_space_variants() {
+        assert_eq!(parse_key("space").unwrap().code, KeyCode::Char(' '));
+        // trim() removes whitespace so " " becomes "" which returns None
+        assert!(parse_key(" ").is_none());
+    }
+
+    #[test]
+    fn test_parse_key_single_letter_aliases() {
+        // Default single-letter aliases for common actions
+        for letter in &['q', 'h', 'j', 'k', 'l', 'n', 's', 'c', 'w', 'g', 'e', 'f', 'y', 't', 'o']
+        {
+            let desc = parse_key(&letter.to_string()).unwrap();
+            assert_eq!(desc.code, KeyCode::Char(*letter));
+        }
+    }
+
+    #[test]
+    fn test_parse_key_case_insensitive_modifier() {
+        let desc = parse_key("ctrl+C").unwrap();
+        assert!(desc.modifiers.contains(KeyModifiers::CONTROL));
+        let desc = parse_key("CTRL+c").unwrap();
+        assert!(desc.modifiers.contains(KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn test_parse_key_combined_modifiers() {
+        let desc = parse_key("Ctrl+Shift+Enter").unwrap();
+        assert!(desc.modifiers.contains(KeyModifiers::CONTROL));
+        assert!(desc.modifiers.contains(KeyModifiers::SHIFT));
+        assert_eq!(desc.code, KeyCode::Enter);
+    }
+
+    // ── KeyBindings default ──
+
+    #[test]
+    fn test_default_bindings_has_all_actions() {
+        let kb = KeyBindings::default();
+        let actions = [
+            "quit", "submit", "newline", "toggle_help", "toggle_settings",
+            "toggle_kanban", "toggle_log", "focus_next", "focus_prev",
+            "tab_next", "tab_prev", "scroll_up", "scroll_down",
+            "page_up", "page_down", "scroll_bottom",
+            "settings_save", "settings_cancel", "search", "search_next", "search_prev",
+            "clear_line", "delete_word", "history_up", "history_down",
+            "select_next", "select_prev", "select_confirm",
+            "new_tab", "close_tab", "overlay_close", "slash_command",
+            "cancel", "copy", "home", "end",
+        ];
+        for action in &actions {
+            assert!(kb.bindings.contains_key(*action), "missing binding: {action}");
+        }
+    }
+
+    // ── action_for ──
+
+    #[test]
+    fn test_action_for_quit() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(kb.action_for(&event), Some(Action::Quit));
+    }
+
+    #[test]
+    fn test_action_for_submit() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        // Enter maps to both Submit and SelectConfirm — HashMap order decides
+        let action = kb.action_for(&event);
+        assert!(
+            action == Some(Action::Submit) || action == Some(Action::SelectConfirm),
+            "unexpected action for Enter: {action:?}"
+        );
+    }
+
+    #[test]
+    fn test_action_for_newline() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(kb.action_for(&event), Some(Action::Newline));
+    }
+
+    #[test]
+    fn test_action_for_toggle_help() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(kb.action_for(&event), Some(Action::ToggleHelp));
+    }
+
+    #[test]
+    fn test_action_for_focus_next() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(kb.action_for(&event), Some(Action::FocusNext));
+    }
+
+    #[test]
+    fn test_action_for_focus_prev() {
+        let kb = KeyBindings::default();
+        // Default binding is Shift+Tab → KeyCode::Tab + SHIFT modifier
+        let event = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
+        assert_eq!(kb.action_for(&event), Some(Action::FocusPrev));
+    }
+
+    #[test]
+    fn test_action_for_scroll() {
+        let kb = KeyBindings::default();
+        // 'k' maps to both scroll_up and select_prev — HashMap order decides
+        let k_action = kb.action_for(&KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert!(
+            k_action == Some(Action::ScrollUp) || k_action == Some(Action::SelectPrev),
+            "unexpected action for 'k': {k_action:?}"
+        );
+        // 'j' maps to both scroll_down and select_next
+        let j_action = kb.action_for(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(
+            j_action == Some(Action::ScrollDown) || j_action == Some(Action::SelectNext),
+            "unexpected action for 'j': {j_action:?}"
+        );
+    }
+
+    #[test]
+    fn test_action_for_unknown_key() {
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert_eq!(kb.action_for(&event), None);
+    }
+
+    #[test]
+    fn test_action_for_ambiguous_binding() {
+        // 'j' is bound to both scroll_down and select_next
+        // The first match in the HashMap wins (but HashMap order is non-deterministic)
+        let kb = KeyBindings::default();
+        let event = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let action = kb.action_for(&event);
+        assert!(action == Some(Action::ScrollDown) || action == Some(Action::SelectNext));
+    }
+
+    // ── action_from_name ──
+
+    #[test]
+    fn test_action_from_name_valid() {
+        let kb = KeyBindings::default();
+        assert_eq!(kb.action_from_name("quit"), Some(Action::Quit));
+        assert_eq!(kb.action_from_name("copy"), Some(Action::Copy));
+        assert_eq!(kb.action_from_name("home"), Some(Action::Home));
+        assert_eq!(kb.action_from_name("end"), Some(Action::End));
+    }
+
+    #[test]
+    fn test_action_from_name_invalid() {
+        let kb = KeyBindings::default();
+        assert_eq!(kb.action_from_name("nonexistent"), None);
+        assert_eq!(kb.action_from_name(""), None);
+    }
+
+    // ── write_default_template ──
+
+    #[test]
+    fn test_write_default_template() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_keybindings.toml");
+        KeyBindings::write_default_template(&path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[bindings]"));
+        assert!(content.contains("quit"));
+        assert!(content.contains("Ctrl+C"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Action enum ──
+
+    #[test]
+    fn test_action_copy_and_eq() {
+        let a = Action::Quit;
+        let b = a;
+        assert_eq!(a, b);
+        assert_ne!(Action::Quit, Action::Submit);
     }
 }
