@@ -11,9 +11,26 @@ use crate::panels;
 use crate::state::{AgentPhase, FocusedPanel, TuiAppState};
 use crate::theme;
 
+pub const MIN_WIDTH: u16 = 40;
+pub const MIN_HEIGHT: u16 = 10;
+pub const RENDER_POLL_MS: u64 = 16;
+
 pub fn render_app(frame: &mut Frame, state: &TuiAppState) {
     let area = frame.area();
     if area.width == 0 || area.height == 0 {
+        return;
+    }
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        let msg = format!(
+            " 终端太小 ({w}×{h})  请调整至 {mw}×{mh} 或更大",
+            w = area.width,
+            h = area.height,
+            mw = MIN_WIDTH,
+            mh = MIN_HEIGHT,
+        );
+        let para = Paragraph::new(msg.as_str())
+            .style(Style::default().fg(theme::RED).bg(theme::BG));
+        frame.render_widget(para, area);
         return;
     }
     frame.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
@@ -344,5 +361,79 @@ fn render_welcome(frame: &mut Frame, area: ratatui::layout::Rect, state: &TuiApp
         ];
         let hint = Paragraph::new(Line::from(lines)).style(Style::default().bg(theme::PANEL));
         frame.render_widget(hint, inner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use std::sync::Arc;
+
+    fn make_state() -> TuiAppState {
+        let mem: Arc<dyn agent_core::MemoryStore> = Arc::new(memory::MockMemoryStore::default());
+        let evo = Arc::new(evolution::EvolutionEngine::new(0.01, mem));
+        TuiAppState::new("render-test".into(), evo)
+    }
+
+    fn render_at_size(w: u16, h: u16) -> ratatui::Terminal<TestBackend> {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let state = make_state();
+        terminal.draw(|f| render_app(f, &state)).unwrap();
+        terminal
+    }
+
+    // ── Small-window guard ──
+
+    #[test]
+    fn test_small_window_zero_width_does_not_panic() {
+        // width=0 should return early without panic
+        render_at_size(0, 20);
+    }
+
+    #[test]
+    fn test_small_window_zero_height_does_not_panic() {
+        // height=0 should return early without panic
+        render_at_size(50, 0);
+    }
+
+    #[test]
+    fn test_small_window_below_min_shows_warning() {
+        // 39×9 is below MIN_WIDTH/MIN_HEIGHT — should render the warning message
+        let terminal = render_at_size(39, 9);
+        let buf = terminal.backend().buffer().clone();
+        // Wide Chinese chars each occupy 2 columns so symbols have padding; strip spaces.
+        let content: String = buf
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            content.contains("终端太小"),
+            "Expected 终端太小 in buffer (spaces stripped), got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_normal_size_does_not_show_warning() {
+        // 80×24 is well above minimum — should NOT show the size warning
+        let terminal = render_at_size(80, 24);
+        let buf = terminal.backend().buffer().clone();
+        let content: String = buf
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            !content.contains("终端太小"),
+            "Should not show size warning at 80×24"
+        );
     }
 }
